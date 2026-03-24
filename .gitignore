@@ -9,3 +9,5 @@ coverage/
 *.log
 serviceAccountKey.json
 .DS_Store
+
+server/elevate-pilates-internal-firebase-adminsdk-fbsvc-6ba310d5a9.json
