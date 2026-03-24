@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply m-0 min-h-screen bg-mist font-sans text-stone-800;
+    background-image:
+      radial-gradient(
+        ellipse 120% 80% at 100% -20%,
+        rgba(196, 164, 132, 0.18),
+        transparent 55%
+      ),
+      radial-gradient(
+        ellipse 90% 60% at 0% 100%,
+        rgba(107, 127, 106, 0.12),
+        transparent 50%
+      );
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}

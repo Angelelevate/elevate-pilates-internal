@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.staging
+.env.production
+.env.local
+*.log
+serviceAccountKey.json
+.DS_Store
