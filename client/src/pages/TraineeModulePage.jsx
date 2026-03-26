@@ -3,6 +3,18 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
+function formatLessonStatus(status) {
+  const map = {
+    not_started: 'Not started',
+    in_progress: 'In progress',
+    completed: 'Completed',
+  }
+  if (map[status]) return map[status]
+  return String(status || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 function typeIcon(type) {
   if (type === 'reading') return '📘'
   if (type === 'video') return '▶️'
@@ -98,7 +110,7 @@ export function TraineeModulePage() {
                   </span>
                   <div>
                     <p className="font-medium text-stone-900">{lesson.title}</p>
-                    <p className="text-xs text-stone-500 capitalize">{lesson.status}</p>
+                    <p className="text-xs text-stone-500">{formatLessonStatus(lesson.status)}</p>
                   </div>
                 </div>
                 {lesson.status === 'completed' ? (

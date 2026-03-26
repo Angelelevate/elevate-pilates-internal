@@ -24,6 +24,9 @@ export function LessonEditorPage() {
   const [statusFlash, setStatusFlash] = useState(null)
   const [saveReadingBusy, setSaveReadingBusy] = useState(false)
   const [saveQuizBusy, setSaveQuizBusy] = useState(false)
+  const [videoReplaceMode, setVideoReplaceMode] = useState(false)
+  const [removeVideoBusy, setRemoveVideoBusy] = useState(false)
+  const [archiveBusy, setArchiveBusy] = useState(false)
   const videoInputRef = useRef(null)
 
   const modules = useMemo(
@@ -54,6 +57,12 @@ export function LessonEditorPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (!lesson || lesson.type !== 'video') return
+    if (!lesson.content?.storagePath) setVideoReplaceMode(true)
+    else setVideoReplaceMode(false)
+  }, [lesson?.id, lesson?.type, lesson?.content?.storagePath])
 
   async function saveReading() {
     setError('')
@@ -132,6 +141,7 @@ export function LessonEditorPage() {
         },
       })
       clearPendingVideo()
+      setVideoReplaceMode(false)
       await load()
       showToast({ variant: 'success', message: 'Video uploaded.' })
     } catch (err) {
@@ -153,6 +163,39 @@ export function LessonEditorPage() {
     const id = setTimeout(() => setStatusFlash(null), 4000)
     return () => clearTimeout(id)
   }, [statusFlash])
+
+  async function removeUploadedVideo() {
+    setError('')
+    setRemoveVideoBusy(true)
+    try {
+      await api.delete(`/api/lessons/${lessonId}/video`)
+      clearPendingVideo()
+      setVideoReplaceMode(true)
+      await load()
+      showToast({ variant: 'success', message: 'Video removed. Upload a new file when ready.' })
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not remove video.')
+    } finally {
+      setRemoveVideoBusy(false)
+    }
+  }
+
+  async function archiveLesson() {
+    if (!window.confirm('Archive this lesson? It will be hidden from trainees.')) return
+    setError('')
+    setArchiveBusy(true)
+    try {
+      await api.delete(`/api/lessons/${lessonId}`)
+      showToast({ variant: 'success', message: 'Lesson archived.' })
+      navigate(`/admin/courses/${lesson.courseId}/modules/${lesson.moduleId}`)
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Could not archive lesson.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
 
   async function setStatus(status) {
     setError('')
@@ -224,6 +267,14 @@ export function LessonEditorPage() {
           >
             {statusSaving === 'published' ? 'Saving…' : 'Mark published'}
           </button>
+          <button
+            type="button"
+            disabled={archiveBusy || statusSaving !== null}
+            onClick={archiveLesson}
+            className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-900 hover:bg-red-100 disabled:opacity-50"
+          >
+            {archiveBusy ? 'Archiving…' : 'Archive lesson'}
+          </button>
         </div>
       </div>
 
@@ -293,23 +344,78 @@ export function LessonEditorPage() {
       {lesson.type === 'video' ? (
         <div className="ui-surface space-y-4 p-5">
           <p className="text-sm text-stone-600">
-            Upload MP4, MOV, or WEBM. Current file on lesson:{' '}
-            <span className="font-medium text-stone-900">
-              {lesson.content?.fileName || 'None'}
-            </span>
+            One video per lesson (MP4, MOV, or WEBM).{' '}
+            {lesson.content?.storagePath ? (
+              <>
+                Current file:{' '}
+                <span className="font-medium text-stone-900">
+                  {lesson.content?.fileName || 'Uploaded video'}
+                </span>
+              </>
+            ) : (
+              <span className="font-medium text-stone-900">No file uploaded yet.</span>
+            )}
           </p>
-          <p className="text-xs text-stone-400">
-            Choose a file to preview it here. Nothing uploads until you start the upload — so the wrong
-            file never leaves your device by accident.
-          </p>
-          <input
-            ref={videoInputRef}
-            type="file"
-            accept="video/mp4,video/quicktime,video/webm"
-            disabled={uploading}
-            onChange={onPickVideoFile}
-            className="block w-full max-w-xl text-sm text-stone-700 file:mr-3 file:rounded-full file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-stone-800 hover:file:bg-stone-200"
-          />
+          {lesson.content?.storagePath && !videoReplaceMode && !pendingVideo ? (
+            <div className="space-y-3">
+              <p className="text-xs text-stone-500">
+                Use <strong>Replace video</strong> to choose a new file, or <strong>Remove video</strong>{' '}
+                to clear the lesson before uploading again.
+              </p>
+              {lesson.content?.downloadUrl ? (
+                <video
+                  src={lesson.content.downloadUrl}
+                  controls
+                  className="w-full max-w-xl rounded-xl border border-stone-200/60 shadow-warm-sm"
+                />
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={uploading || removeVideoBusy}
+                  onClick={() => setVideoReplaceMode(true)}
+                  className="ui-btn-secondary"
+                >
+                  Replace video
+                </button>
+                <button
+                  type="button"
+                  disabled={uploading || removeVideoBusy}
+                  onClick={removeUploadedVideo}
+                  className="ui-btn-secondary !border-red-200 !text-red-900"
+                >
+                  {removeVideoBusy ? 'Removing…' : 'Remove video'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-stone-400">
+                Choose a file to preview it here. Nothing uploads until you start the upload.
+              </p>
+              {lesson.content?.storagePath ? (
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => {
+                    clearPendingVideo()
+                    setVideoReplaceMode(false)
+                  }}
+                  className="text-xs font-semibold text-deep underline-offset-2 hover:underline"
+                >
+                  Cancel replace
+                </button>
+              ) : null}
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm"
+                disabled={uploading}
+                onChange={onPickVideoFile}
+                className="block w-full max-w-xl text-sm text-stone-700 file:mr-3 file:rounded-full file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-stone-800 hover:file:bg-stone-200"
+              />
+            </>
+          )}
           {pendingVideo ? (
             <div className="space-y-3 rounded-xl border border-stone-200/80 bg-stone-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -364,13 +470,6 @@ export function LessonEditorPage() {
                 Uploading… {uploadProgress != null ? `${uploadProgress}%` : 'starting…'}
               </p>
             </div>
-          ) : null}
-          {lesson.content?.downloadUrl ? (
-            <video
-              src={lesson.content.downloadUrl}
-              controls
-              className="mt-2 w-full max-w-xl rounded-xl border border-stone-200/60 shadow-warm-sm"
-            />
           ) : null}
         </div>
       ) : null}

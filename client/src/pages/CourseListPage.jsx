@@ -3,6 +3,10 @@ import { Link } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { TraineeVisibilityTip } from '../components/admin/TraineeVisibilityTip.jsx'
+import {
+  MAX_COURSE_DESCRIPTION_LENGTH,
+  MAX_COURSE_TITLE_LENGTH,
+} from '../utils/constants.js'
 
 function StatusBadge({ status }) {
   const map = {
@@ -51,7 +55,13 @@ export function CourseListPage() {
       await load()
       showToast({ variant: 'success', message: 'Course created.' })
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not create course.')
+      const msg =
+        err.response?.data?.error ||
+        (err.response?.status === 409
+          ? 'A course with the same title and description already exists.'
+          : 'Could not create course.')
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setBusy(false)
     }
@@ -78,19 +88,25 @@ export function CourseListPage() {
           <label className="text-xs font-medium text-stone-600">Title</label>
           <input
             required
+            maxLength={MAX_COURSE_TITLE_LENGTH}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
+          <p className="text-[10px] text-stone-400">{title.length}/{MAX_COURSE_TITLE_LENGTH}</p>
         </div>
         <div className="flex-[2] space-y-1.5">
           <label className="text-xs font-medium text-stone-600">Description</label>
           <input
             required
+            maxLength={MAX_COURSE_DESCRIPTION_LENGTH}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
+          <p className="text-[10px] text-stone-400">
+            {description.length}/{MAX_COURSE_DESCRIPTION_LENGTH}
+          </p>
         </div>
         <button type="submit" disabled={busy} className="ui-btn-primary whitespace-nowrap">
           {busy ? 'Creating…' : 'New course'}
@@ -133,7 +149,9 @@ export function CourseListPage() {
                 <td className="px-5 py-4">
                   <StatusBadge status={c.status} />
                 </td>
-                <td className="px-5 py-4 text-stone-500">—</td>
+                <td className="px-5 py-4 tabular-nums text-stone-700">
+                  {typeof c.moduleCount === 'number' ? c.moduleCount : 0}
+                </td>
               </tr>
             ))}
           </tbody>

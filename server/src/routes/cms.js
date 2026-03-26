@@ -16,6 +16,11 @@ import {
 import { getDb } from '../utils/firestoreDb.js'
 import { sanitizeReadingHtml } from '../utils/sanitizeReadingHtml.js'
 import { serializeDoc } from '../utils/serialize.js'
+import {
+  assertCourseDescriptionLength,
+  assertCourseTextLimits,
+  assertCourseTitleLength,
+} from '../utils/cmsLimits.js'
 
 export const cmsRouter = Router()
 
@@ -78,6 +83,26 @@ cmsRouter.post('/courses', async (req, res, next) => {
       err.status = 400
       throw err
     }
+    assertCourseTextLimits(title, description)
+    const tNorm = String(title).trim().toLowerCase()
+    const dNorm = String(description).trim().toLowerCase()
+    const existingSnap = await db.collection('courses').limit(400).get()
+    for (const d of existingSnap.docs) {
+      const row = d.data()
+      if (row.status === 'archived') continue
+      if (
+        String(row.title || '')
+          .trim()
+          .toLowerCase() === tNorm &&
+        String(row.description || '')
+          .trim()
+          .toLowerCase() === dNorm
+      ) {
+        const err = new Error('A course with the same title and description already exists.')
+        err.status = 409
+        throw err
+      }
+    }
     const ref = db.collection('courses').doc()
     const due = dueDate ? Timestamp.fromDate(new Date(dueDate)) : null
     await ref.set({
@@ -100,8 +125,19 @@ cmsRouter.get('/courses', async (req, res, next) => {
   try {
     const db = dbRequired()
     const status = req.query.status ? String(req.query.status) : null
-    let snap = await db.collection('courses').limit(200).get()
-    let rows = snap.docs.map((d) => serializeDoc(d))
+    const snap = await db.collection('courses').limit(200).get()
+    const modSnap = await db.collection('modules').limit(2000).get()
+    const moduleCountByCourse = new Map()
+    for (const d of modSnap.docs) {
+      const row = d.data()
+      const cid = row.courseId
+      if (!cid || row.status === 'archived') continue
+      moduleCountByCourse.set(cid, (moduleCountByCourse.get(cid) || 0) + 1)
+    }
+    let rows = snap.docs.map((d) => ({
+      ...serializeDoc(d),
+      moduleCount: moduleCountByCourse.get(d.id) || 0,
+    }))
     if (status) rows = rows.filter((r) => r.status === status)
     rows.sort((a, b) => String(a.title).localeCompare(String(b.title)))
     res.json(rows)
@@ -133,9 +169,10 @@ cmsRouter.get('/courses/:courseId', async (req, res, next) => {
       .collection('modules')
       .where('courseId', '==', courseId)
       .get()
+    const moduleCount = modulesSnap.docs.filter((d) => d.data().status !== 'archived').length
     res.json({
       ...serializeDoc(c),
-      moduleCount: modulesSnap.size,
+      moduleCount,
     })
   } catch (e) {
     next(e)
@@ -160,6 +197,7 @@ cmsRouter.patch('/courses/:courseId', async (req, res, next) => {
         err.status = 400
         throw err
       }
+      assertCourseTitleLength(t)
       patch.title = t
     }
     if (req.body?.description !== undefined) {
@@ -169,6 +207,7 @@ cmsRouter.patch('/courses/:courseId', async (req, res, next) => {
         err.status = 400
         throw err
       }
+      assertCourseDescriptionLength(d)
       patch.description = d
     }
     if (req.body?.thumbnailUrl !== undefined) {
@@ -186,6 +225,33 @@ cmsRouter.patch('/courses/:courseId', async (req, res, next) => {
     }
     await ref.update(patch)
     res.json(serializeDoc(await ref.get()))
+  } catch (e) {
+    next(e)
+  }
+})
+
+cmsRouter.delete('/courses/:courseId', async (req, res, next) => {
+  try {
+    const db = dbRequired()
+    const courseId = req.params.courseId
+    const ref = db.collection('courses').doc(courseId)
+    const doc = await ref.get()
+    if (!doc.exists) {
+      const err = new Error('Course not found')
+      err.status = 404
+      throw err
+    }
+    const enSnap = await db.collection('enrollments').where('courseId', '==', courseId).get()
+    const hasActive = enSnap.docs.some((d) => d.data().status === 'active')
+    if (hasActive) {
+      const err = new Error(
+        'Remove or withdraw all active trainee enrollments before archiving this course.',
+      )
+      err.status = 400
+      throw err
+    }
+    await setCourseTreeStatus(courseId, 'archived')
+    res.status(204).send()
   } catch (e) {
     next(e)
   }

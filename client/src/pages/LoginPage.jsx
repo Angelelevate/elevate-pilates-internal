@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { api } from '../services/api.js'
 import { mapAuthError } from '../utils/mapAuthError.js'
+import { PasswordInput } from '../components/auth/PasswordInput.jsx'
 
 function homeForRole() {
   return '/'
@@ -82,20 +83,12 @@ export function LoginPage() {
             className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
         </div>
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="text-sm font-medium text-stone-700">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-          />
-        </div>
+        <PasswordInput
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+        />
         {error ? (
           <p
             className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800"

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 import { api } from '../services/api.js'
 
-function DueDateBanner({ dueDate }) {
+function DueDateBanner({ dueDate, courseComplete }) {
   const [now, setNow] = useState(null)
   useEffect(() => {
     setNow(Date.now())
@@ -15,8 +15,19 @@ function DueDateBanner({ dueDate }) {
   const days = Math.ceil((d - now) / (1000 * 60 * 60 * 24))
   let tone = 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
   let icon = '✓'
-  if (days <= 14 && days > 7) { tone = 'border-amber-200 bg-amber-50/80 text-amber-950'; icon = '⏳' }
-  if (days <= 7) { tone = 'border-red-200 bg-red-50/80 text-red-950'; icon = '⚠' }
+  let sub = `${d.toLocaleDateString()} (${days > 0 ? `${days} days left` : days === 0 ? 'Due today' : `${Math.abs(days)} days ago`})`
+  if (courseComplete) {
+    sub = `${d.toLocaleDateString()} — course completed; due date is for your records.`
+  } else {
+    if (days <= 14 && days > 7) {
+      tone = 'border-amber-200 bg-amber-50/80 text-amber-950'
+      icon = '⏳'
+    }
+    if (days <= 7) {
+      tone = 'border-red-200 bg-red-50/80 text-red-950'
+      icon = '⚠'
+    }
+  }
   return (
     <div
       className={`motion-safe:animate-in-up motion-reduce:animate-none flex items-center gap-3 rounded-2xl border px-5 py-3.5 shadow-warm-sm ${tone}`}
@@ -24,9 +35,7 @@ function DueDateBanner({ dueDate }) {
       <span className="text-lg" aria-hidden>{icon}</span>
       <div>
         <p className="text-sm font-semibold">Course due date</p>
-        <p className="text-xs opacity-80">
-          {d.toLocaleDateString()} ({days > 0 ? `${days} days left` : 'Due'})
-        </p>
+        <p className="text-xs opacity-80">{sub}</p>
       </div>
     </div>
   )
@@ -117,7 +126,10 @@ export function TraineeDashboardPage() {
             </div>
           </div>
 
-          <DueDateBanner dueDate={row.enrollment?.dueDate || row.course?.dueDate} />
+          <DueDateBanner
+            dueDate={row.enrollment?.dueDate || row.course?.dueDate}
+            courseComplete={row.courseProgressPercent >= 100}
+          />
 
           {lockMsg ? (
             <p className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 shadow-warm-sm">

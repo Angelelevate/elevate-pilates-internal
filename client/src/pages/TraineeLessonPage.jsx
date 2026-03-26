@@ -20,6 +20,7 @@ export function TraineeLessonPage() {
   const [moduleData, setModuleData] = useState(null)
   const [error, setError] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [lessonNavLocked, setLessonNavLocked] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -37,6 +38,10 @@ export function TraineeLessonPage() {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    setLessonNavLocked(false)
+  }, [lessonId])
 
   const orderedLessons = useMemo(() => {
     const list = moduleData?.lessons || []
@@ -127,7 +132,13 @@ export function TraineeLessonPage() {
         </div>
 
         {doc.type === 'reading' ? (
-          <ReadingPane lessonId={lessonId} body={doc.content?.body} onDone={refresh} />
+          <ReadingPane
+            lessonId={lessonId}
+            body={doc.content?.body}
+            onDone={refresh}
+            alreadyComplete={progress?.status === 'completed'}
+            onNavLockChange={setLessonNavLocked}
+          />
         ) : null}
         {doc.type === 'video' ? (
           <VideoPane
@@ -141,36 +152,58 @@ export function TraineeLessonPage() {
           />
         ) : null}
         {doc.type === 'quiz' ? (
-          <QuizPane lessonId={lessonId} quizId={doc.content?.quizId} onDone={refresh} />
+          <QuizPane
+            lessonId={lessonId}
+            quizId={doc.content?.quizId}
+            onDone={refresh}
+            alreadyComplete={progress?.status === 'completed'}
+            onNavLockChange={setLessonNavLocked}
+          />
         ) : null}
         {doc.type === 'exam' ? (
           <ExamPane quizId={doc.content?.quizId} />
         ) : null}
 
-        <nav className="flex flex-wrap gap-3 border-t border-stone-200/60 pt-5">
-          {prevId ? (
+        <nav className="flex flex-wrap items-stretch gap-3 border-t border-stone-200/60 pt-5">
+          {prevId && !lessonNavLocked ? (
             <Link
               to={`/courses/${courseId}/modules/${moduleId}/lessons/${prevId}`}
-              className="ui-btn-secondary min-h-[44px] min-w-[120px] justify-center"
+              className="ui-btn-secondary inline-flex min-h-[44px] min-w-[120px] items-center justify-center"
             >
               Previous
             </Link>
+          ) : prevId ? (
+            <span
+              className="inline-flex min-h-[44px] min-w-[120px] cursor-not-allowed items-center justify-center rounded-full border border-stone-200/80 bg-stone-50 px-4 py-2 text-sm text-stone-400"
+              aria-disabled="true"
+            >
+              Previous
+            </span>
           ) : (
             <span className="inline-flex min-h-[44px] min-w-[120px] items-center justify-center rounded-full border border-stone-100 px-4 py-2 text-sm text-stone-400">
               Previous
             </span>
           )}
-          {nextId ? (
+          {nextId && !lessonNavLocked ? (
             <Link
               to={`/courses/${courseId}/modules/${moduleId}/lessons/${nextId}`}
-              className="ui-btn-primary inline-flex min-h-[44px] min-w-[120px] justify-center"
+              className="ui-btn-primary inline-flex min-h-[44px] min-w-[120px] items-center justify-center"
             >
               Next
             </Link>
+          ) : nextId ? (
+            <span
+              className="inline-flex min-h-[44px] min-w-[120px] cursor-not-allowed items-center justify-center rounded-full border border-stone-200/80 bg-stone-100 px-4 py-2 text-sm font-medium text-stone-400"
+              aria-disabled="true"
+            >
+              Next
+            </span>
           ) : (
             <Link
               to={`/courses/${courseId}/modules/${moduleId}`}
-              className="ui-btn-primary inline-flex min-h-[44px] min-w-[160px] justify-center"
+              className={`ui-btn-primary inline-flex min-h-[44px] min-w-[160px] items-center justify-center ${lessonNavLocked ? 'pointer-events-none opacity-50' : ''}`}
+              aria-disabled={lessonNavLocked}
+              onClick={(e) => lessonNavLocked && e.preventDefault()}
             >
               Back to module
             </Link>
@@ -181,23 +214,28 @@ export function TraineeLessonPage() {
   )
 }
 
-function ReadingPane({ lessonId, body, onDone }) {
+function ReadingPane({ lessonId, body, onDone, alreadyComplete, onNavLockChange }) {
   const { showToast } = useToast()
   const [marking, setMarking] = useState(false)
+  const [markedThisSession, setMarkedThisSession] = useState(false)
   const html = DOMPurify.sanitize(body || '')
   const words = (body || '').trim().split(/\s+/).filter(Boolean).length
   const minutes = Math.max(1, Math.round(words / 200))
+  const showCompleted = Boolean(alreadyComplete || markedThisSession)
 
   async function markComplete() {
+    onNavLockChange?.(true)
     setMarking(true)
     try {
       await api.post(`/api/my/progress/lessons/${lessonId}/complete`)
-      onDone()
+      setMarkedThisSession(true)
+      await onDone()
       showToast({ variant: 'success', message: 'Nice work — lesson marked complete.' })
     } catch {
       showToast({ variant: 'error', message: 'Could not save progress. Try again.' })
     } finally {
       setMarking(false)
+      onNavLockChange?.(false)
     }
   }
 
@@ -215,11 +253,11 @@ function ReadingPane({ lessonId, body, onDone }) {
       />
       <button
         type="button"
-        disabled={marking}
+        disabled={marking || showCompleted}
         onClick={markComplete}
-        className="ui-btn-primary min-h-[44px]"
+        className="ui-btn-primary min-h-[44px] disabled:pointer-events-none disabled:opacity-60"
       >
-        {marking ? 'Saving…' : 'Mark as completed'}
+        {marking ? 'Saving…' : showCompleted ? 'Completed' : 'Mark as completed'}
       </button>
     </article>
   )
@@ -437,20 +475,25 @@ function VideoPane({
   )
 }
 
-function QuizPane({ lessonId, quizId, onDone }) {
+function QuizPane({ lessonId, quizId, onDone, alreadyComplete, onNavLockChange }) {
   const { showToast } = useToast()
   const [busy, setBusy] = useState(false)
+  const [markedThisSession, setMarkedThisSession] = useState(false)
+  const showCompleted = Boolean(alreadyComplete || markedThisSession)
 
   async function complete() {
+    onNavLockChange?.(true)
     setBusy(true)
     try {
       await api.post(`/api/my/progress/lessons/${lessonId}/complete`)
-      onDone()
+      setMarkedThisSession(true)
+      await onDone()
       showToast({ variant: 'success', message: 'Lesson marked complete.' })
     } catch {
       showToast({ variant: 'error', message: 'Could not save. Try again.' })
     } finally {
       setBusy(false)
+      onNavLockChange?.(false)
     }
   }
 
@@ -461,11 +504,11 @@ function QuizPane({ lessonId, quizId, onDone }) {
       </p>
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || showCompleted}
         onClick={complete}
-        className="ui-btn-primary min-h-[44px]"
+        className="ui-btn-primary min-h-[44px] disabled:pointer-events-none disabled:opacity-60"
       >
-        {busy ? 'Saving…' : 'Mark lesson complete'}
+        {busy ? 'Saving…' : showCompleted ? 'Completed' : 'Mark lesson complete'}
       </button>
     </div>
   )

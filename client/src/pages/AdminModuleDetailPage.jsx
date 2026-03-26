@@ -27,6 +27,7 @@ export function AdminModuleDetailPage() {
   const [saveBusy, setSaveBusy] = useState(false)
   const [addLessonBusy, setAddLessonBusy] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
+  const [archiveBusy, setArchiveBusy] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -112,6 +113,29 @@ export function AdminModuleDetailPage() {
     }
   }
 
+  async function archiveModule() {
+    if (
+      !window.confirm(
+        'Archive this module? It will be hidden from trainees and removed from publish checks.',
+      )
+    ) {
+      return
+    }
+    setError('')
+    setArchiveBusy(true)
+    try {
+      await api.delete(`/api/modules/${moduleId}`)
+      showToast({ variant: 'success', message: 'Module archived.' })
+      navigate(`/admin/courses/${courseId}`)
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Could not archive module.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
+
   async function onDragEnd(result) {
     if (!result.destination) return
     const items = Array.from(lessons)
@@ -186,6 +210,14 @@ export function AdminModuleDetailPage() {
               className="ui-btn-primary !px-3 !py-1.5 !text-xs"
             >
               {statusBusy ? 'Updating…' : 'Publish module'}
+            </button>
+            <button
+              type="button"
+              disabled={statusBusy || archiveBusy}
+              onClick={archiveModule}
+              className="rounded-full border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-900 hover:bg-red-100 disabled:opacity-50"
+            >
+              {archiveBusy ? 'Archiving…' : 'Archive module'}
             </button>
           </div>
         </div>

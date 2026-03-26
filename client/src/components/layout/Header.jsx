@@ -64,8 +64,14 @@ export function Header({ mobileNavOpen = false, onMobileNavToggle }) {
       <div className="flex items-center gap-2 text-sm">
         {user ? (
           <>
-            <span className="hidden max-w-[180px] truncate text-stone-500 lg:inline">
-              {user.displayName || user.email}
+            <span className="hidden max-w-[200px] truncate text-stone-500 lg:inline" title={user.email}>
+              {(() => {
+                const fromProfile =
+                  profile?.firstName || profile?.lastName
+                    ? `${profile.firstName || ''} ${profile.lastName || ''}`.trim()
+                    : ''
+                return fromProfile || user.displayName?.trim() || user.email || 'Account'
+              })()}
             </span>
             <Link
               to={profile?.mustChangePassword ? '/account/change-password' : '/profile'}

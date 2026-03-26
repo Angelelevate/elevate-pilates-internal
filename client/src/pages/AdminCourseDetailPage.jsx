@@ -5,6 +5,10 @@ import { api } from '../services/api.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { TraineeVisibilityTip } from '../components/admin/TraineeVisibilityTip.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
+import {
+  MAX_COURSE_DESCRIPTION_LENGTH,
+  MAX_COURSE_TITLE_LENGTH,
+} from '../utils/constants.js'
 
 export function AdminCourseDetailPage() {
   const { showToast } = useToast()
@@ -29,6 +33,7 @@ export function AdminCourseDetailPage() {
   const [validating, setValidating] = useState(false)
   const [publishBusy, setPublishBusy] = useState(false)
   const [withdrawingId, setWithdrawingId] = useState(null)
+  const [archiveBusy, setArchiveBusy] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -180,6 +185,29 @@ export function AdminCourseDetailPage() {
     }
   }
 
+  async function archiveCourse() {
+    if (
+      !window.confirm(
+        'Archive this course? It will be hidden from trainees and the course list can still show it as archived. Active enrollments must be removed first.',
+      )
+    ) {
+      return
+    }
+    setError('')
+    setArchiveBusy(true)
+    try {
+      await api.delete(`/api/courses/${courseId}`)
+      showToast({ variant: 'success', message: 'Course archived.' })
+      navigate('/admin/courses')
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Could not archive course.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
+
   const activeEnrolledIds = useMemo(
     () =>
       new Set(
@@ -294,6 +322,14 @@ export function AdminCourseDetailPage() {
               {publishBusy ? 'Publishing…' : 'Publish'}
             </button>
           )}
+          <button
+            type="button"
+            disabled={archiveBusy || publishBusy || validating}
+            onClick={archiveCourse}
+            className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-900 shadow-warm-sm transition-colors hover:bg-red-100 disabled:pointer-events-none disabled:opacity-50"
+          >
+            {archiveBusy ? 'Archiving…' : 'Archive course'}
+          </button>
         </div>
       </div>
 
@@ -336,19 +372,27 @@ export function AdminCourseDetailPage() {
         <div className="space-y-1.5 md:col-span-2">
           <label className="text-xs font-medium text-stone-600">Title</label>
           <input
+            maxLength={MAX_COURSE_TITLE_LENGTH}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
+          <p className="text-[10px] text-stone-400">
+            {title.length}/{MAX_COURSE_TITLE_LENGTH}
+          </p>
         </div>
         <div className="space-y-1.5 md:col-span-2">
           <label className="text-xs font-medium text-stone-600">Description</label>
           <textarea
+            maxLength={MAX_COURSE_DESCRIPTION_LENGTH}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
             className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
+          <p className="text-[10px] text-stone-400">
+            {description.length}/{MAX_COURSE_DESCRIPTION_LENGTH}
+          </p>
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-stone-600">Due date</label>

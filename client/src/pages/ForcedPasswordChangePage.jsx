@@ -98,20 +98,12 @@ export function ForcedPasswordChangePage() {
         onSubmit={onSubmit}
         className="ui-surface mt-6 w-full space-y-5 p-7"
       >
-        <div className="space-y-1.5">
-          <label htmlFor="current" className="text-sm font-medium text-stone-700">
-            Current (temporary) password
-          </label>
-          <input
-            id="current"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-          />
-        </div>
+        <PasswordInput
+          label="Current (temporary) password"
+          value={currentPassword}
+          onChange={setCurrentPassword}
+          autoComplete="current-password"
+        />
         <PasswordInput
           label="New password"
           value={newPassword}
