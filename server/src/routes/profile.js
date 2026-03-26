@@ -7,6 +7,7 @@ import { getDb } from '../utils/firestoreDb.js'
 import { validatePasswordAgainstPolicy } from '../utils/passwordPolicy.js'
 import { getPublicConfig } from '../services/configService.js'
 import { serializeDoc } from '../utils/serialize.js'
+import { normalizeOptionalPhone, normalizePersonName } from '../utils/userFields.js'
 
 export const profileRouter = Router()
 
@@ -61,24 +62,20 @@ profileRouter.patch('/', async (req, res, next) => {
       err.code = 'MUST_CHANGE_PASSWORD'
       throw err
     }
-    const firstName =
-      req.body?.firstName !== undefined
-        ? String(req.body.firstName).trim()
-        : undefined
-    const lastName =
-      req.body?.lastName !== undefined
-        ? String(req.body.lastName).trim()
-        : undefined
-    const phone =
-      req.body?.phone !== undefined
-        ? req.body.phone
-          ? String(req.body.phone).trim()
-          : null
-        : undefined
     const patch = { updatedAt: FieldValue.serverTimestamp() }
-    if (firstName !== undefined) patch.firstName = firstName
-    if (lastName !== undefined) patch.lastName = lastName
-    if (phone !== undefined) patch.phone = phone
+    try {
+      if (req.body?.firstName !== undefined) {
+        patch.firstName = normalizePersonName(req.body.firstName, 'First name')
+      }
+      if (req.body?.lastName !== undefined) {
+        patch.lastName = normalizePersonName(req.body.lastName, 'Last name')
+      }
+      if (req.body?.phone !== undefined) {
+        patch.phone = normalizeOptionalPhone(req.body.phone)
+      }
+    } catch (e) {
+      return next(e)
+    }
     await ref.update(patch)
     const nextDoc = await ref.get()
     res.json(serializeDoc(nextDoc))

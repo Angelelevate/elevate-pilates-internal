@@ -77,7 +77,12 @@ export function AuthProvider({ children }) {
 
   const signOut = useCallback(async () => {
     const auth = getFirebaseAuth()
-    if (auth?.currentUser) await firebaseSignOut(auth)
+    try {
+      if (auth?.currentUser) await firebaseSignOut(auth)
+    } catch {
+      // Still clear local session (e.g. expired token / bad request during transitional states).
+    }
+    setUser(null)
     setRole(null)
     setProfile(null)
   }, [])

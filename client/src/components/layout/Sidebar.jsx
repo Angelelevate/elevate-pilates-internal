@@ -50,19 +50,13 @@ function SidebarNav({ onNavigate }) {
     links.push(
       { to: '/admin/courses', label: 'Courses', icon: 'courses' },
       { to: '/admin/users', label: 'Users', icon: 'users' },
-      { to: '/profile', label: 'Profile', icon: 'profile' },
     )
   } else if (user && role === 'trainee') {
     if (profile?.mustChangePassword === true) {
       links.push({ to: '/account/change-password', label: 'Set new password', icon: 'password' })
     } else {
-      links.push(
-        { to: '/dashboard', label: 'My course', icon: 'dashboard' },
-        { to: '/profile', label: 'Profile', icon: 'profile' },
-      )
+      links.push({ to: '/dashboard', label: 'My courses', icon: 'dashboard' })
     }
-  } else if (user) {
-    links.push({ to: '/profile', label: 'Profile', icon: 'profile' })
   }
 
   return (
@@ -140,7 +134,8 @@ export function Sidebar({ mobileNavOpen = false, onCloseMobileNav }) {
           id="mobile-navigation"
           className={[
             asideClass,
-            'absolute left-0 top-0 h-full max-h-svh overflow-y-auto transition-transform duration-200 ease-soft motion-reduce:transition-none md:hidden',
+            /* Below header (z-50): header is py-3 + h-10 row ≈ 4rem */
+            'absolute bottom-0 left-0 top-16 overflow-y-auto transition-transform duration-200 ease-soft motion-reduce:transition-none md:hidden',
             mobileNavOpen ? 'translate-x-0' : '-translate-x-full',
           ].join(' ')}
           aria-hidden={!mobileNavOpen}

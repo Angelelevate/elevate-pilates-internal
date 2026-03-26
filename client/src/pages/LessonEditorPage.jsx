@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ReactQuill from 'react-quill'
 import 'react-quill/dist/quill.snow.css'
@@ -57,10 +57,15 @@ export function LessonEditorPage() {
 
   async function saveReading() {
     setError('')
+    if (!title.trim()) {
+      setError('Lesson title is required.')
+      showToast({ variant: 'error', message: 'Lesson title is required.' })
+      return
+    }
     setSaveReadingBusy(true)
     try {
       await api.patch(`/api/lessons/${lessonId}`, {
-        title,
+        title: title.trim(),
         content: { body },
       })
       await load()
@@ -74,10 +79,15 @@ export function LessonEditorPage() {
 
   async function saveQuizRef() {
     setError('')
+    if (!title.trim()) {
+      setError('Lesson title is required.')
+      showToast({ variant: 'error', message: 'Lesson title is required.' })
+      return
+    }
     setSaveQuizBusy(true)
     try {
       await api.patch(`/api/lessons/${lessonId}`, {
-        title,
+        title: title.trim(),
         content: { quizId },
       })
       await load()
@@ -116,6 +126,7 @@ export function LessonEditorPage() {
       const fd = new FormData()
       fd.append('video', pendingVideo)
       await api.post(`/api/lessons/${lessonId}/upload-video`, fd, {
+        timeout: 900_000,
         onUploadProgress: (ev) => {
           if (ev.total) setUploadProgress(Math.round((ev.loaded * 100) / ev.total))
         },
@@ -246,7 +257,7 @@ export function LessonEditorPage() {
         </p>
       ) : null}
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <label className="text-xs font-medium text-stone-600">Title</label>
         <input
           value={title}
@@ -255,11 +266,19 @@ export function LessonEditorPage() {
         />
       </div>
 
+      {lesson.type === 'video' && !lesson.content?.storagePath ? (
+        <p
+          className="max-w-3xl rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-2.5 text-sm text-amber-950 shadow-warm-sm"
+          role="status"
+        >
+          <strong>No video file yet.</strong> Upload a video before publishing this lesson — otherwise
+          publishing the course will be blocked.
+        </p>
+      ) : null}
+
       {lesson.type === 'reading' ? (
         <div className="space-y-3">
-          <div className="lesson-editor-quill rounded-2xl border border-stone-200/60 bg-white p-2 shadow-warm-sm">
-            <ReactQuill theme="snow" value={body} onChange={setBody} modules={modules} />
-          </div>
+          <ReadingQuillFallback key={lessonId} body={body} onChange={setBody} modules={modules} />
           <button
             type="button"
             disabled={saveReadingBusy}
@@ -357,22 +376,26 @@ export function LessonEditorPage() {
       ) : null}
 
       {lesson.type === 'quiz' || lesson.type === 'exam' ? (
-        <div className="ui-surface space-y-4 p-5">
-          <label className="text-xs font-medium text-stone-600">Quiz / exam definition ID</label>
-          <input
-            value={quizId}
-            onChange={(e) => setQuizId(e.target.value)}
-            placeholder="quiz document id (Module 5)"
-            className="ui-input w-full max-w-xl rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-          />
-          <button
-            type="button"
-            disabled={saveQuizBusy}
-            onClick={saveQuizRef}
-            className="ui-btn-primary"
-          >
-            {saveQuizBusy ? 'Saving…' : 'Save reference'}
-          </button>
+        <div className="ui-surface space-y-5 p-5">
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-stone-600">Quiz / exam definition ID</label>
+            <input
+              value={quizId}
+              onChange={(e) => setQuizId(e.target.value)}
+              placeholder="quiz document id (Module 5)"
+              className="ui-input w-full max-w-xl rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+            />
+          </div>
+          <div>
+            <button
+              type="button"
+              disabled={saveQuizBusy}
+              onClick={saveQuizRef}
+              className="ui-btn-primary"
+            >
+              {saveQuizBusy ? 'Saving…' : 'Save reference'}
+            </button>
+          </div>
           <p className="text-xs text-stone-400">
             Wire this to quiz definitions when the quiz engine is enabled.
           </p>
@@ -388,5 +411,46 @@ export function LessonEditorPage() {
         </Link>
       </p>
     </div>
+  )
+}
+
+class ReadingQuillErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950">
+          <p>
+            The rich text editor could not load this content (often due to unusual HTML). Edit the
+            HTML below and save — or simplify the content in a plain editor and paste back.
+          </p>
+          <textarea
+            rows={14}
+            value={this.props.body}
+            onChange={(e) => this.props.onChange(e.target.value)}
+            className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3 py-2 font-mono text-xs outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+          />
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+function ReadingQuillFallback({ body, onChange, modules }) {
+  return (
+    <ReadingQuillErrorBoundary body={body} onChange={onChange}>
+      <div className="lesson-editor-quill rounded-2xl border border-stone-200/60 bg-white p-2 shadow-warm-sm">
+        <ReactQuill theme="snow" value={body} onChange={onChange} modules={modules} />
+      </div>
+    </ReadingQuillErrorBoundary>
   )
 }

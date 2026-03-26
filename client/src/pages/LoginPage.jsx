@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { api } from '../services/api.js'
+import { mapAuthError } from '../utils/mapAuthError.js'
 
-function homeForRole(role) {
-  if (role === 'admin') return '/admin/courses'
-  if (role === 'trainee') return '/dashboard'
+function homeForRole() {
   return '/'
 }
 
@@ -22,7 +21,7 @@ export function LoginPage() {
 
   useEffect(() => {
     if (!loading && user && role) {
-      navigate(from && from !== '/login' ? from : homeForRole(role), {
+      navigate(from && from !== '/login' ? from : homeForRole(), {
         replace: true,
       })
     }
@@ -36,13 +35,16 @@ export function LoginPage() {
       await login(email.trim(), password)
       const { data } = await api.post('/api/auth/verify-token')
       const r = data.role
-      navigate(from && from !== '/login' ? from : homeForRole(r), { replace: true })
+      navigate(from && from !== '/login' ? from : homeForRole(), { replace: true })
     } catch (err) {
-      const code = err?.code || err?.response?.data?.error
+      const mapped = mapAuthError(err)
+      const apiErr = err?.response?.data?.error
       setError(
-        typeof code === 'string'
-          ? code
-          : 'Unable to sign in. Check your email and password.',
+        mapped ||
+          (typeof apiErr === 'string' && !apiErr.startsWith('auth/')
+            ? apiErr
+            : null) ||
+          'Unable to sign in. Check your email and password.',
       )
     } finally {
       setBusy(false)

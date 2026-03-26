@@ -21,11 +21,13 @@ import { NotFoundPage } from '../pages/NotFoundPage.jsx'
 export function AppRoutes() {
   return (
     <Routes>
+      {/* Invite signup runs without the main shell so partial sessions do not expose Profile / Log out. */}
+      <Route path="invite/:token" element={<InviteAcceptPage />} />
+
       <Route element={<AppShell />}>
         <Route index element={<HomePage />} />
         <Route path="login" element={<LoginPage />} />
         <Route path="forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="invite/:token" element={<InviteAcceptPage />} />
 
         <Route
           path="account/change-password"

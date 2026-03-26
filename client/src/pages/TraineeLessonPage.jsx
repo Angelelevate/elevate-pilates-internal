@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
@@ -15,6 +15,7 @@ function typeIcon(type) {
 
 export function TraineeLessonPage() {
   const { courseId, moduleId, lessonId } = useParams()
+  const navigate = useNavigate()
   const [lesson, setLesson] = useState(null)
   const [moduleData, setModuleData] = useState(null)
   const [error, setError] = useState('')
@@ -103,12 +104,21 @@ export function TraineeLessonPage() {
           >
             {drawerOpen ? 'Hide outline' : 'Lesson outline'}
           </button>
-          <Link
-            to={`/courses/${courseId}/modules/${moduleId}`}
-            className="ui-link text-sm font-semibold text-deep underline-offset-2 hover:underline"
-          >
-            ← Back to module
-          </Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="ui-link text-sm font-semibold text-stone-600 underline-offset-2 hover:underline"
+            >
+              ← My courses
+            </button>
+            <Link
+              to={`/courses/${courseId}/modules/${moduleId}`}
+              className="ui-link text-sm font-semibold text-deep underline-offset-2 hover:underline"
+            >
+              ← Module
+            </Link>
+          </div>
         </div>
 
         <div className="ui-surface p-6">
@@ -285,20 +295,29 @@ function VideoPane({
     if (!el) return null
     const watchedToEnd = Boolean(options.watchedToEnd)
     const dur = getDuration(el)
-    if (!(dur > 0) && !watchedToEnd) return null
+    const fallbackDur = Number(durationSeconds)
+    const denom =
+      dur > 0
+        ? dur
+        : Number.isFinite(fallbackDur) && fallbackDur > 0
+          ? fallbackDur
+          : 0
 
     let currentTime = el.currentTime
-    if (watchedToEnd && dur > 0) currentTime = dur
+    if (watchedToEnd && denom > 0) currentTime = denom
 
     const prevMax = progress?.videoProgress?.maxReached || 0
     const maxReached = Math.max(
       currentTime,
       prevMax,
-      watchedToEnd && dur > 0 ? dur : 0,
+      watchedToEnd && denom > 0 ? denom : 0,
     )
-    const denom = dur > 0 ? dur : Math.max(Number(durationSeconds) || 0, 1)
-    let percent = Math.min(100, Math.round((maxReached / denom) * 100))
+    let percent = 0
+    if (denom > 0) {
+      percent = Math.min(100, Math.round((maxReached / denom) * 100))
+    }
     if (watchedToEnd) percent = 100
+    if (!watchedToEnd && maxReached < 0.05) return null
 
     try {
       const { data } = await api.post(`/api/my/progress/lessons/${lessonId}/video-progress`, {

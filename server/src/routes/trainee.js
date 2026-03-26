@@ -67,6 +67,39 @@ function isLessonCompleted(progress) {
   return progress?.status === 'completed'
 }
 
+/** Partial credit for in-progress video lessons (dashboard / module bars). */
+function videoLessonProgressWeight(lesson, prog) {
+  if (lesson.type !== 'video') return null
+  if (!prog) return 0
+  if (prog.status === 'completed') return 1
+  const vp = prog.videoProgress
+  if (!vp) return 0
+  const pct = Number(vp.percentWatched)
+  if (Number.isFinite(pct) && pct > 0) return Math.min(1, pct / 100)
+  const dur = Number(lesson.content?.durationSeconds)
+  const mr = Number(vp.maxReached)
+  if (Number.isFinite(dur) && dur > 0 && Number.isFinite(mr) && mr > 0) {
+    return Math.min(1, mr / dur)
+  }
+  return 0
+}
+
+function lessonProgressWeight(lesson, prog) {
+  if (!prog) return 0
+  if (isLessonCompleted(prog)) return 1
+  const vw = videoLessonProgressWeight(lesson, prog)
+  if (vw !== null) return vw
+  return 0
+}
+
+function sumLessonWeights(lessons, progressByLessonId) {
+  let sum = 0
+  for (const l of lessons) {
+    sum += lessonProgressWeight(l, progressByLessonId.get(l.id) ?? null)
+  }
+  return sum
+}
+
 function moduleCompletionState(mod, lessons, progressByLessonId) {
   const criteria = mod.completionCriteria || {}
   const needExam = Boolean(criteria.examPassed)
@@ -205,29 +238,34 @@ traineeRouter.get('/courses', async (req, res, next) => {
         const p = progressByLessonId.get(l.id)
         if (isLessonCompleted(p)) completedLessons += 1
       }
+      const weightedSum = sumLessonWeights(allLessons, progressByLessonId)
       const courseProgressPercent =
-        totalLessons === 0 ? 0 : Math.round((completedLessons / totalLessons) * 100)
+        totalLessons === 0 ? 0 : Math.round((weightedSum / totalLessons) * 100)
       out.push({
         enrollment: serializeDoc(d),
         course: serializeDoc(courseDoc),
         courseProgressPercent,
         completedLessons,
         totalLessons,
-        modules: states.map((s) => ({
-          id: s.module.id,
-          title: s.module.title,
-          description: s.module.description,
-          order: s.module.order,
-          status: s.status,
-          unlocked: s.unlocked,
-          prerequisiteTitle: s.prerequisiteTitle,
-          lessonCount: s.lessonCount,
-          completedLessonCount: s.completedLessonCount,
-          progressPercent:
-            s.lessonCount === 0
-              ? 0
-              : Math.round((s.completedLessonCount / s.lessonCount) * 100),
-        })),
+        modules: states.map((s) => {
+          const w = sumLessonWeights(
+            s.lessons.filter((l) => l.status === 'published'),
+            progressByLessonId,
+          )
+          return {
+            id: s.module.id,
+            title: s.module.title,
+            description: s.module.description,
+            order: s.module.order,
+            status: s.status,
+            unlocked: s.unlocked,
+            prerequisiteTitle: s.prerequisiteTitle,
+            lessonCount: s.lessonCount,
+            completedLessonCount: s.completedLessonCount,
+            progressPercent:
+              s.lessonCount === 0 ? 0 : Math.round((w / s.lessonCount) * 100),
+          }
+        }),
       })
     }
     res.json(out)
@@ -262,25 +300,30 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
       const p = progressByLessonId.get(l.id)
       if (isLessonCompleted(p)) completedLessons += 1
     }
+    const weightedSum = sumLessonWeights(allLessons, progressByLessonId)
     res.json({
       course: serializeDoc(courseDoc),
       courseProgressPercent:
-        totalLessons === 0 ? 0 : Math.round((completedLessons / totalLessons) * 100),
-      modules: states.map((s) => ({
-        id: s.module.id,
-        title: s.module.title,
-        description: s.module.description,
-        order: s.module.order,
-        status: s.status,
-        unlocked: s.unlocked,
-        prerequisiteTitle: s.prerequisiteTitle,
-        lessonCount: s.lessonCount,
-        completedLessonCount: s.completedLessonCount,
-        progressPercent:
-          s.lessonCount === 0
-            ? 0
-            : Math.round((s.completedLessonCount / s.lessonCount) * 100),
-      })),
+        totalLessons === 0 ? 0 : Math.round((weightedSum / totalLessons) * 100),
+      modules: states.map((s) => {
+        const w = sumLessonWeights(
+          s.lessons.filter((l) => l.status === 'published'),
+          progressByLessonId,
+        )
+        return {
+          id: s.module.id,
+          title: s.module.title,
+          description: s.module.description,
+          order: s.module.order,
+          status: s.status,
+          unlocked: s.unlocked,
+          prerequisiteTitle: s.prerequisiteTitle,
+          lessonCount: s.lessonCount,
+          completedLessonCount: s.completedLessonCount,
+          progressPercent:
+            s.lessonCount === 0 ? 0 : Math.round((w / s.lessonCount) * 100),
+        }
+      }),
     })
   } catch (e) {
     next(e)

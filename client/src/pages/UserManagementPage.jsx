@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api.js'
 import { useToast } from '../contexts/ToastContext.jsx'
+import { PasswordInput } from '../components/auth/PasswordInput.jsx'
+
+const MAX_NAME_CHARS = 100
 
 function StatusBadge({ status }) {
   const cls =
@@ -84,6 +87,29 @@ export function UserManagementPage() {
   const [createdCredentials, setCreatedCredentials] = useState(null)
   const [creatingTrainee, setCreatingTrainee] = useState(false)
   const [togglingUid, setTogglingUid] = useState(null)
+  const [passwordPolicy, setPasswordPolicy] = useState(null)
+  const [traineeModalError, setTraineeModalError] = useState('')
+  const [regeneratingUid, setRegeneratingUid] = useState(null)
+
+  function resetTraineeForm() {
+    setTraineeEmail('')
+    setTraineeFirstName('')
+    setTraineeLastName('')
+    setTraineeTempPassword('')
+    setTraineeCourseId('')
+    setTraineeModalError('')
+  }
+
+  function openTraineeModal() {
+    setError('')
+    resetTraineeForm()
+    setModalOpen(true)
+  }
+
+  function closeTraineeModal() {
+    setModalOpen(false)
+    resetTraineeForm()
+  }
 
   async function refresh() {
     setError('')
@@ -98,6 +124,21 @@ export function UserManagementPage() {
 
   useEffect(() => {
     refresh()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get('/api/config/public')
+      .then(({ data }) => {
+        if (!cancelled) setPasswordPolicy(data.passwordPolicy)
+      })
+      .catch(() => {
+        if (!cancelled) setPasswordPolicy(null)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const filteredUsers = useMemo(() => {
@@ -120,7 +161,9 @@ export function UserManagementPage() {
         message: next === 'active' ? 'Account enabled.' : 'Account disabled.',
       })
     } catch (err) {
-      setError(err.response?.data?.error || 'Update failed.')
+      const msg = err.response?.data?.error || 'Update failed.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setTogglingUid(null)
     }
@@ -129,6 +172,7 @@ export function UserManagementPage() {
   async function createTrainee(e) {
     e.preventDefault()
     setError('')
+    setTraineeModalError('')
     setCreatingTrainee(true)
     try {
       const body = {
@@ -141,12 +185,7 @@ export function UserManagementPage() {
         body.temporaryPassword = traineeTempPassword
       }
       const { data } = await api.post('/api/users/trainees', body)
-      setModalOpen(false)
-      setTraineeEmail('')
-      setTraineeFirstName('')
-      setTraineeLastName('')
-      setTraineeTempPassword('')
-      setTraineeCourseId('')
+      closeTraineeModal()
       await refresh()
       showToast({ variant: 'success', message: 'Trainee account created.' })
       if (data.temporaryPassword) {
@@ -156,13 +195,37 @@ export function UserManagementPage() {
         })
       }
     } catch (err) {
-      setError(
+      const msg =
         err.response?.data?.error ||
-          err.response?.data?.failures?.[0]?.message ||
-          'Could not create trainee.',
-      )
+        err.response?.data?.failures?.[0]?.message ||
+        'Could not create trainee.'
+      setTraineeModalError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setCreatingTrainee(false)
+    }
+  }
+
+  async function regenerateTemporaryPassword(uid) {
+    setError('')
+    setRegeneratingUid(uid)
+    try {
+      const { data } = await api.post(`/api/users/trainees/${uid}/regenerate-temporary-password`)
+      setCreatedCredentials({
+        email: data.email,
+        temporaryPassword: data.temporaryPassword,
+      })
+      await refresh()
+      showToast({
+        variant: 'success',
+        message: 'New temporary password generated. Copy it from the dialog.',
+      })
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Could not generate a new password.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+    } finally {
+      setRegeneratingUid(null)
     }
   }
 
@@ -178,11 +241,7 @@ export function UserManagementPage() {
             password before using courses.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setModalOpen(true)}
-          className="ui-btn-primary"
-        >
+        <button type="button" onClick={openTraineeModal} className="ui-btn-primary">
           Add trainee
         </button>
       </div>
@@ -244,25 +303,37 @@ export function UserManagementPage() {
                   </td>
                   <td className="px-5 py-3.5">
                     {u.role === 'trainee' ? (
-                      <button
-                        type="button"
-                        disabled={togglingUid === u.uid}
-                        className="ui-press text-xs font-semibold text-deep underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-                        onClick={() =>
-                          toggleUser(
-                            u.uid,
-                            u.authDisabled || u.status === 'disabled'
-                              ? 'active'
-                              : 'disabled',
-                          )
-                        }
-                      >
-                        {togglingUid === u.uid
-                          ? 'Updating…'
-                          : u.authDisabled || u.status === 'disabled'
-                            ? 'Enable'
-                            : 'Disable'}
-                      </button>
+                      <div className="flex flex-col items-start gap-1.5">
+                        <button
+                          type="button"
+                          disabled={togglingUid === u.uid}
+                          className="ui-press text-xs font-semibold text-deep underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+                          onClick={() =>
+                            toggleUser(
+                              u.uid,
+                              u.authDisabled || u.status === 'disabled'
+                                ? 'active'
+                                : 'disabled',
+                            )
+                          }
+                        >
+                          {togglingUid === u.uid
+                            ? 'Updating…'
+                            : u.authDisabled || u.status === 'disabled'
+                              ? 'Enable'
+                              : 'Disable'}
+                        </button>
+                        {u.mustChangePassword ? (
+                          <button
+                            type="button"
+                            disabled={regeneratingUid === u.uid}
+                            className="ui-press text-xs font-semibold text-stone-600 underline-offset-2 hover:underline disabled:opacity-50"
+                            onClick={() => regenerateTemporaryPassword(u.uid)}
+                          >
+                            {regeneratingUid === u.uid ? 'Working…' : 'New temp password'}
+                          </button>
+                        ) : null}
+                      </div>
                     ) : (
                       <span className="text-xs text-stone-400">—</span>
                     )}
@@ -275,15 +346,23 @@ export function UserManagementPage() {
       </section>
 
       {modalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm motion-safe:animate-backdrop-in motion-reduce:animate-none">
-          <div className="ui-surface w-full max-w-md !border-stone-200 p-6 !shadow-warm-lg motion-safe:animate-modal-in motion-reduce:animate-none">
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm motion-safe:animate-backdrop-in motion-reduce:animate-none">
+          <div className="ui-surface relative z-[91] w-full max-w-md !border-stone-200 p-6 !shadow-warm-lg motion-safe:animate-modal-in motion-reduce:animate-none">
             <h3 className="font-display text-lg font-semibold text-stone-900">Add trainee</h3>
             <p className="mt-1 text-xs text-stone-400">
               Leave temporary password blank to generate one. Copy it from the confirmation dialog;
-              it is not shown again.
+              it is not shown again. If you lose it, use &quot;New temp password&quot; on the user row.
             </p>
+            {traineeModalError ? (
+              <p
+                className="motion-safe:animate-in-up motion-reduce:animate-none mt-3 rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800"
+                role="alert"
+              >
+                {traineeModalError}
+              </p>
+            ) : null}
             <form className="mt-5 space-y-4" onSubmit={createTrainee}>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <label className="text-sm font-medium text-stone-700">Email</label>
                 <input
                   required
@@ -294,39 +373,39 @@ export function UserManagementPage() {
                 />
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-stone-700">First name</label>
                   <input
                     required
+                    maxLength={MAX_NAME_CHARS}
                     value={traineeFirstName}
                     onChange={(e) => setTraineeFirstName(e.target.value)}
                     className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                   />
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <label className="text-sm font-medium text-stone-700">Last name</label>
                   <input
                     required
+                    maxLength={MAX_NAME_CHARS}
                     value={traineeLastName}
                     onChange={(e) => setTraineeLastName(e.target.value)}
                     className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                   />
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-stone-700">
-                  Temporary password (optional)
-                </label>
-                <input
-                  type="password"
-                  autoComplete="new-password"
+              <div className="space-y-2">
+                <PasswordInput
+                  label="Temporary password (optional)"
                   value={traineeTempPassword}
-                  onChange={(e) => setTraineeTempPassword(e.target.value)}
+                  onChange={setTraineeTempPassword}
+                  policy={passwordPolicy}
+                  showPolicy={Boolean(traineeTempPassword.trim())}
+                  autoComplete="new-password"
                   placeholder="Blank = auto-generate"
-                  className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                 />
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <label className="text-sm font-medium text-stone-700">
                   Auto-enroll course (optional)
                 </label>
@@ -344,11 +423,7 @@ export function UserManagementPage() {
                 </select>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  className="ui-btn-secondary"
-                  onClick={() => setModalOpen(false)}
-                >
+                <button type="button" className="ui-btn-secondary" onClick={closeTraineeModal}>
                   Cancel
                 </button>
                 <button
@@ -365,7 +440,7 @@ export function UserManagementPage() {
       ) : null}
 
       {createdCredentials ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm motion-safe:animate-backdrop-in motion-reduce:animate-none">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm motion-safe:animate-backdrop-in motion-reduce:animate-none">
           <div className="ui-surface w-full max-w-md !border-stone-200 p-6 !shadow-warm-lg motion-safe:animate-modal-in motion-reduce:animate-none">
             <h3 className="font-display text-lg font-semibold text-stone-900">
               Share credentials once

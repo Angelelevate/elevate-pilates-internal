@@ -35,8 +35,6 @@ export function HomePage() {
 
   if (!config) return <LoadingSpinner label="Loading platform" />
 
-  const pp = config.passwordPolicy
-
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="lg:col-span-2">
@@ -68,29 +66,6 @@ export function HomePage() {
       </div>
 
       <div className="space-y-4">
-        <div className="ui-surface p-5">
-          <h2 className="flex items-center gap-2 font-display text-base font-semibold text-stone-900">
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" className="text-clay">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-            </svg>
-            Password policy
-          </h2>
-          <ul className="mt-4 space-y-2.5">
-            {[
-              { label: 'Minimum length', value: pp?.minLength },
-              { label: 'Uppercase', value: pp?.requireUppercase ? 'Required' : 'Optional' },
-              { label: 'Lowercase', value: pp?.requireLowercase ? 'Required' : 'Optional' },
-              { label: 'Number', value: pp?.requireNumber ? 'Required' : 'Optional' },
-              { label: 'Symbol', value: pp?.requireSymbol ? 'Required' : 'Optional' },
-            ].map((item) => (
-              <li key={item.label} className="flex items-center justify-between text-sm">
-                <span className="text-stone-500">{item.label}</span>
-                <span className="rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700">{item.value}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
         <div className="rounded-2xl bg-gradient-to-br from-deep via-deep-600 to-sage-800 p-5 text-white shadow-warm">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-white/60">Platform</p>
           <p className="mt-1 font-display text-lg font-semibold">Elevate your practice</p>

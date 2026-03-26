@@ -1,13 +1,30 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { sendPasswordResetEmail } from 'firebase/auth'
 import { getFirebaseAuth } from '../config/firebase.js'
+import { api } from '../services/api.js'
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [policy, setPolicy] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .get('/api/config/public')
+      .then(({ data }) => {
+        if (!cancelled) setPolicy(data.passwordPolicy)
+      })
+      .catch(() => {
+        if (!cancelled) setPolicy(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -41,6 +58,22 @@ export function ForgotPasswordPage() {
         <p className="mt-1 text-sm text-stone-500">
           We will email you a link to choose a new password.
         </p>
+        {policy ? (
+          <div className="mx-auto mt-4 max-w-md rounded-xl border border-stone-200/80 bg-stone-50/90 px-4 py-3 text-left text-xs text-stone-600">
+            <p className="font-semibold text-stone-800">Your new password must meet:</p>
+            <ul className="mt-2 list-disc space-y-1 pl-4">
+              <li>At least {policy.minLength ?? 8} characters</li>
+              {policy.requireUppercase ? <li>One uppercase letter</li> : null}
+              {policy.requireLowercase ? <li>One lowercase letter</li> : null}
+              {policy.requireNumber ? <li>One number</li> : null}
+              {policy.requireSymbol ? <li>One symbol</li> : null}
+            </ul>
+            <p className="mt-2 text-stone-500">
+              If the password you pick on the reset page is too weak, the reset may fail — match these
+              rules before submitting.
+            </p>
+          </div>
+        ) : null}
       </div>
       <form
         onSubmit={onSubmit}

@@ -57,17 +57,37 @@ export function AdminCourseDetailPage() {
   async function saveCourseMeta(e) {
     e.preventDefault()
     setError('')
+    if (!title.trim() || !description.trim()) {
+      const msg = 'Course title and description are required.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+      return
+    }
+    if (dueDate) {
+      const cmp = new Date(dueDate)
+      cmp.setHours(0, 0, 0, 0)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      if (cmp < today) {
+        const msg = 'Due date cannot be in the past.'
+        setError(msg)
+        showToast({ variant: 'error', message: msg })
+        return
+      }
+    }
     setMetaSaving(true)
     try {
       await api.patch(`/api/courses/${courseId}`, {
-        title,
-        description,
+        title: title.trim(),
+        description: description.trim(),
         dueDate: dueDate || null,
       })
       await load()
       showToast({ variant: 'success', message: 'Course details saved.' })
     } catch (err) {
-      setError(err.response?.data?.error || 'Save failed.')
+      const msg = err.response?.data?.error || 'Save failed.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setMetaSaving(false)
     }
@@ -89,7 +109,9 @@ export function AdminCourseDetailPage() {
       await load()
       showToast({ variant: 'success', message: 'Module added.' })
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add module.')
+      const msg = err.response?.data?.error || 'Could not add module.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setModuleAdding(false)
     }

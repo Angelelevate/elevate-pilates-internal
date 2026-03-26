@@ -313,7 +313,7 @@ export function AdminModuleDetailPage() {
               className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <label className="text-xs font-medium text-stone-600">Type</label>
             <select
               value={lessonType}

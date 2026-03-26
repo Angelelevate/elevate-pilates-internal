@@ -4,6 +4,8 @@ import { useToast } from '../contexts/ToastContext.jsx'
 import { PasswordInput } from '../components/auth/PasswordInput.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
+const MAX_NAME_CHARS = 100
+
 export function ProfilePage() {
   const { showToast } = useToast()
   const [profile, setProfile] = useState(null)
@@ -52,18 +54,26 @@ export function ProfilePage() {
     e.preventDefault()
     setMessage('')
     setError('')
+    if (!firstName.trim() || !lastName.trim()) {
+      const msg = 'First and last name are required.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+      return
+    }
     setSavingProfile(true)
     try {
       const { data } = await api.patch('/api/profile', {
-        firstName,
-        lastName,
-        phone: phone || null,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        phone: phone.trim() ? phone.trim() : null,
       })
       setProfile(data)
       setMessage('Profile saved.')
       showToast({ variant: 'success', message: 'Profile saved.' })
     } catch (err) {
-      setError(err.response?.data?.error || 'Save failed.')
+      const msg = err.response?.data?.error || 'Save failed.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setSavingProfile(false)
     }
@@ -84,7 +94,12 @@ export function ProfilePage() {
       setMessage('Password updated.')
       showToast({ variant: 'success', message: 'Password updated.' })
     } catch (err) {
-      setError(err.response?.data?.error || 'Password change failed.')
+      const msg =
+        err.response?.data?.failures?.[0]?.message ||
+        err.response?.data?.error ||
+        'Password change failed.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setChangingPassword(false)
     }
@@ -133,6 +148,8 @@ export function ProfilePage() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-stone-700">First name</label>
               <input
+                required
+                maxLength={MAX_NAME_CHARS}
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
@@ -141,6 +158,8 @@ export function ProfilePage() {
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-stone-700">Last name</label>
               <input
+                required
+                maxLength={MAX_NAME_CHARS}
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
@@ -151,7 +170,9 @@ export function ProfilePage() {
             <label className="text-sm font-medium text-stone-700">Phone</label>
             <input
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              inputMode="tel"
+              autoComplete="tel"
+              onChange={(e) => setPhone(e.target.value.replace(/[^\d+().\-\s]/g, ''))}
               className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
             />
           </div>

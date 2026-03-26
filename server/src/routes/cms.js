@@ -31,6 +31,29 @@ function dbRequired() {
   return db
 }
 
+function assertDueDateNotInPast(isoOrTimestamp) {
+  if (!isoOrTimestamp) return
+  const d = new Date(
+    typeof isoOrTimestamp === 'string' || typeof isoOrTimestamp === 'number'
+      ? isoOrTimestamp
+      : isoOrTimestamp.toDate?.() ?? isoOrTimestamp,
+  )
+  if (Number.isNaN(d.getTime())) {
+    const err = new Error('Invalid due date')
+    err.status = 400
+    throw err
+  }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const cmp = new Date(d)
+  cmp.setHours(0, 0, 0, 0)
+  if (cmp < today) {
+    const err = new Error('Due date cannot be in the past')
+    err.status = 400
+    throw err
+  }
+}
+
 function makeUpload() {
   const { maxVideoUploadBytes } = getEnv()
   const maxBytes = maxVideoUploadBytes ?? DEFAULT_MAX_VIDEO_BYTES
@@ -130,9 +153,23 @@ cmsRouter.patch('/courses/:courseId', async (req, res, next) => {
       throw err
     }
     const patch = { updatedAt: FieldValue.serverTimestamp() }
-    if (req.body?.title !== undefined) patch.title = String(req.body.title).trim()
+    if (req.body?.title !== undefined) {
+      const t = String(req.body.title).trim()
+      if (!t) {
+        const err = new Error('Course title cannot be empty')
+        err.status = 400
+        throw err
+      }
+      patch.title = t
+    }
     if (req.body?.description !== undefined) {
-      patch.description = String(req.body.description).trim()
+      const d = String(req.body.description).trim()
+      if (!d) {
+        const err = new Error('Course description cannot be empty')
+        err.status = 400
+        throw err
+      }
+      patch.description = d
     }
     if (req.body?.thumbnailUrl !== undefined) {
       patch.thumbnailUrl = req.body.thumbnailUrl
@@ -140,9 +177,12 @@ cmsRouter.patch('/courses/:courseId', async (req, res, next) => {
         : null
     }
     if (req.body?.dueDate !== undefined) {
-      patch.dueDate = req.body.dueDate
-        ? Timestamp.fromDate(new Date(req.body.dueDate))
-        : null
+      if (req.body.dueDate) {
+        assertDueDateNotInPast(req.body.dueDate)
+        patch.dueDate = Timestamp.fromDate(new Date(req.body.dueDate))
+      } else {
+        patch.dueDate = null
+      }
     }
     await ref.update(patch)
     res.json(serializeDoc(await ref.get()))
@@ -200,16 +240,20 @@ cmsRouter.post('/courses/:courseId/modules', async (req, res, next) => {
       throw err
     }
     const { title, description, order, completionCriteria } = req.body || {}
-    if (!title || !description || order === undefined || order === null) {
-      const err = new Error('title, description, and order are required')
+    if (!title || order === undefined || order === null) {
+      const err = new Error('title and order are required')
       err.status = 400
       throw err
     }
+    const desc =
+      description !== undefined && description !== null
+        ? String(description).trim()
+        : ''
     const ref = db.collection('modules').doc()
     await ref.set({
       courseId,
       title: String(title).trim(),
-      description: String(description).trim(),
+      description: desc,
       order: Number(order),
       completionCriteria: {
         allLessonsCompleted: completionCriteria?.allLessonsCompleted !== false,
@@ -304,7 +348,15 @@ cmsRouter.patch('/modules/:moduleId', async (req, res, next) => {
       throw err
     }
     const patch = { updatedAt: FieldValue.serverTimestamp() }
-    if (req.body?.title !== undefined) patch.title = String(req.body.title).trim()
+    if (req.body?.title !== undefined) {
+      const t = String(req.body.title).trim()
+      if (!t) {
+        const err = new Error('Module title cannot be empty')
+        err.status = 400
+        throw err
+      }
+      patch.title = t
+    }
     if (req.body?.description !== undefined) {
       patch.description = String(req.body.description).trim()
     }
@@ -494,7 +546,15 @@ cmsRouter.patch('/lessons/:lessonId', async (req, res, next) => {
     }
     const data = doc.data()
     const patch = { updatedAt: FieldValue.serverTimestamp() }
-    if (req.body?.title !== undefined) patch.title = String(req.body.title).trim()
+    if (req.body?.title !== undefined) {
+      const t = String(req.body.title).trim()
+      if (!t) {
+        const err = new Error('Lesson title cannot be empty')
+        err.status = 400
+        throw err
+      }
+      patch.title = t
+    }
     if (req.body?.order !== undefined) patch.order = Number(req.body.order)
     if (req.body?.content && typeof req.body.content === 'object') {
       let nextContent = { ...data.content, ...req.body.content }
@@ -531,6 +591,12 @@ cmsRouter.patch('/lessons/:lessonId/status', async (req, res, next) => {
       err.status = 404
       throw err
     }
+    const lesson = doc.data()
+    if (status === 'published' && lesson.type === 'video' && !lesson.content?.storagePath) {
+      const err = new Error('Upload a video before publishing this lesson')
+      err.status = 400
+      throw err
+    }
     await ref.update({ status, updatedAt: FieldValue.serverTimestamp() })
     res.json(serializeDoc(await ref.get()))
   } catch (e) {
@@ -560,6 +626,15 @@ cmsRouter.post(
   (req, res, next) => {
     uploadVideo.single('video')(req, res, (err) => {
       if (err) {
+        const { maxVideoUploadBytes } = getEnv()
+        const maxBytes = maxVideoUploadBytes ?? DEFAULT_MAX_VIDEO_BYTES
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          const e = new Error(
+            `Video is too large. Maximum size is ${Math.round(maxBytes / (1024 * 1024))} MB.`,
+          )
+          e.status = 400
+          return next(e)
+        }
         const e = new Error(err.message || 'Upload failed')
         e.status = 400
         return next(e)

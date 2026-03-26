@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
@@ -13,6 +13,7 @@ function typeIcon(type) {
 
 export function TraineeModulePage() {
   const { courseId, moduleId } = useParams()
+  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
 
@@ -50,6 +51,15 @@ export function TraineeModulePage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => navigate('/dashboard')}
+          className="ui-btn-secondary !px-3 !py-1.5 !text-xs"
+        >
+          ← Back to my courses
+        </button>
+      </div>
       <div className="ui-surface p-6">
         <p className="ui-section-label">Module</p>
         <h1 className="mt-2 font-display text-2xl font-semibold text-stone-900">

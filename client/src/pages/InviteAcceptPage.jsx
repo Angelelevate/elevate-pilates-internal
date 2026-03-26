@@ -6,6 +6,8 @@ import { getFirebaseAuth } from '../config/firebase.js'
 import { useAuth } from '../contexts/AuthContext.jsx'
 import { PasswordInput } from '../components/auth/PasswordInput.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
+import { mapAuthError } from '../utils/mapAuthError.js'
+import { APP_NAME } from '../utils/constants.js'
 
 export function InviteAcceptPage() {
   const { token } = useParams()
@@ -65,13 +67,17 @@ export function InviteAcceptPage() {
       const cred = await signInWithEmailAndPassword(auth, email, password)
       await cred.user.getIdToken(true)
       await refreshClaims()
-      navigate('/dashboard', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
-      const msg =
+      const raw =
         err.response?.data?.error ||
         err.response?.data?.failures?.[0]?.message ||
         err.message ||
-        'Could not complete signup.'
+        ''
+      let msg = mapAuthError(err) || raw || 'Could not complete signup.'
+      if (typeof msg === 'string' && msg.startsWith('auth/')) {
+        msg = mapAuthError({ code: msg }) || 'Could not complete signup.'
+      }
       setError(msg)
     } finally {
       setBusy(false)
@@ -79,75 +85,90 @@ export function InviteAcceptPage() {
   }
 
   if (loading) {
-    return <LoadingSpinner label="Checking your invite" />
+    return (
+      <div className="min-h-svh bg-stone-50/80">
+        <InviteChrome />
+        <LoadingSpinner label="Checking your invite" />
+      </div>
+    )
   }
 
   if (!valid) {
     return (
-      <div className="mx-auto max-w-md motion-safe:animate-in-up motion-reduce:animate-none">
-        <div className="ui-surface border-amber-200 bg-amber-50/80 p-6 text-sm text-amber-950">
-          <h1 className="font-display text-xl font-semibold">Invite unavailable</h1>
-          <p className="mt-2">
-            {expired
-              ? 'This invite has expired. Contact your administrator for a new link.'
-              : 'This invite link is not valid. Ask your administrator to resend it.'}
-          </p>
-          <Link
-            to="/login"
-            className="ui-link mt-3 inline-block font-medium text-deep underline-offset-2 hover:underline"
-          >
-            Go to sign in
-          </Link>
+      <div className="min-h-svh bg-stone-50/80">
+        <InviteChrome />
+        <div className="mx-auto max-w-md motion-safe:animate-in-up motion-reduce:animate-none px-4 pt-4">
+          <div className="ui-surface border-amber-200 bg-amber-50/80 p-6 text-sm text-amber-950">
+            <h1 className="font-display text-xl font-semibold">Invite unavailable</h1>
+            <p className="mt-2">
+              {expired
+                ? 'This invite has expired. Contact your administrator for a new link.'
+                : 'This invite link is not valid. Ask your administrator to resend it.'}
+            </p>
+            <Link
+              to="/login"
+              className="ui-link mt-3 inline-block font-medium text-deep underline-offset-2 hover:underline"
+            >
+              Go to sign in
+            </Link>
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="mx-auto flex max-w-lg flex-col items-center py-4">
-      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-deep text-lg font-bold text-white shadow-warm">
-        EP
-      </div>
-      <div className="w-full text-center">
-        <h1 className="font-display text-2xl font-semibold text-stone-900">
-          Create your account
-        </h1>
-        <p className="mt-1 text-sm text-stone-500">
-          You are joining as <span className="font-medium text-stone-800">{email}</span>
-        </p>
-      </div>
-      <form
-        onSubmit={onSubmit}
-        className="ui-surface mt-6 w-full space-y-5 p-7"
-      >
-        <div className="grid gap-4 sm:grid-cols-2">
+    <div className="min-h-svh bg-stone-50/80">
+      <InviteChrome />
+      <div className="mx-auto flex max-w-lg flex-col items-center px-4 py-4">
+        <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-deep text-lg font-bold text-white shadow-warm">
+          EP
+        </div>
+        <div className="w-full text-center">
+          <h1 className="font-display text-2xl font-semibold text-stone-900">
+            Create your account
+          </h1>
+          <p className="mt-1 text-sm text-stone-500">
+            You are joining as <span className="font-medium text-stone-800">{email}</span>
+          </p>
+        </div>
+        <form
+          onSubmit={onSubmit}
+          className="ui-surface mt-6 w-full space-y-5 p-7"
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-stone-700">First name</label>
+              <input
+                required
+                maxLength={100}
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-stone-700">Last name</label>
+              <input
+                required
+                maxLength={100}
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+              />
+            </div>
+          </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-stone-700">First name</label>
+            <label className="text-sm font-medium text-stone-700">Phone (optional)</label>
             <input
-              required
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              value={phone}
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="+1 555 123 4567"
+              onChange={(e) => setPhone(e.target.value.replace(/[^\d+().\-\s]/g, ''))}
               className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
             />
           </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-stone-700">Last name</label>
-            <input
-              required
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-            />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-stone-700">Phone (optional)</label>
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-          />
-        </div>
         <PasswordInput
           label="Choose a password"
           value={password}
@@ -170,7 +191,29 @@ export function InviteAcceptPage() {
         >
           {busy ? 'Creating account…' : 'Complete setup'}
         </button>
-      </form>
+        </form>
+      </div>
     </div>
+  )
+}
+
+function InviteChrome() {
+  return (
+    <header className="border-b border-stone-200/80 bg-white/90 px-4 py-3 backdrop-blur-sm">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+        <Link
+          to="/"
+          className="font-display text-sm font-semibold text-deep underline-offset-2 hover:underline"
+        >
+          {APP_NAME}
+        </Link>
+        <Link
+          to="/login"
+          className="text-xs font-medium text-stone-600 underline-offset-2 hover:underline"
+        >
+          Sign in
+        </Link>
+      </div>
+    </header>
   )
 }

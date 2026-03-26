@@ -6,9 +6,7 @@ import { api } from '../services/api.js'
 import { PasswordInput } from '../components/auth/PasswordInput.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
-function homeForRole(role) {
-  if (role === 'admin') return '/admin/courses'
-  if (role === 'trainee') return '/dashboard'
+function homeForRole() {
   return '/'
 }
 
@@ -45,7 +43,7 @@ export function ForcedPasswordChangePage() {
       return
     }
     if (profile && profile.mustChangePassword !== true) {
-      navigate(homeForRole(role), { replace: true })
+      navigate(homeForRole(), { replace: true })
     }
   }, [loading, user, profile, role, navigate])
 
@@ -66,7 +64,7 @@ export function ForcedPasswordChangePage() {
         return
       }
       showToast({ variant: 'success', message: 'Password updated. Welcome in!' })
-      navigate(homeForRole(nextRole), { replace: true })
+      navigate(homeForRole(), { replace: true })
     } catch (err) {
       const msg =
         err.response?.data?.error ||

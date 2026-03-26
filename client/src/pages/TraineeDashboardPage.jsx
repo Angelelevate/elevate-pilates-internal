@@ -57,7 +57,7 @@ export function TraineeDashboardPage() {
   }, [])
 
   if (loading) {
-    return <LoadingSpinner label="Loading your course" />
+    return <LoadingSpinner label="Loading your courses" />
   }
 
   if (error) {
@@ -74,7 +74,7 @@ export function TraineeDashboardPage() {
   if (!rows.length) {
     return (
       <div className="ui-surface p-8 text-center">
-        <h1 className="font-display text-2xl font-semibold text-stone-900">Dashboard</h1>
+        <h1 className="font-display text-2xl font-semibold text-stone-900">Home</h1>
         <p className="mt-2 text-sm text-stone-600">
           You are not enrolled in a published course yet. Your administrator will assign one.
         </p>
@@ -82,69 +82,81 @@ export function TraineeDashboardPage() {
     )
   }
 
-  const primary = rows[0]
-
   return (
-    <div className="space-y-6">
-      <div className="ui-surface p-6">
-        <p className="ui-section-label">Your course</p>
-        <h1 className="mt-2 font-display text-2xl font-semibold text-stone-900">
-          {primary.course?.title || 'Your course'}
-        </h1>
-        <p className="mt-1 text-sm text-stone-600">{primary.course?.description}</p>
-
-        <div className="mt-5">
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="font-medium text-stone-700">Overall progress</span>
-            <span className="rounded-md bg-sage-50 px-2 py-0.5 text-xs font-semibold text-sage-700">{primary.courseProgressPercent}%</span>
-          </div>
-          <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-stone-100">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-sage to-deep transition-[width] duration-700 ease-soft-out"
-              style={{ width: `${primary.courseProgressPercent}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      <DueDateBanner dueDate={primary.enrollment?.dueDate || primary.course?.dueDate} />
-
-      {lockMsg ? (
-        <p className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 shadow-warm-sm">
-          {lockMsg}
+    <div className="space-y-10">
+      <div>
+        <p className="ui-section-label">Learning</p>
+        <h1 className="mt-2 font-display text-2xl font-semibold text-stone-900">Your courses</h1>
+        <p className="mt-1 text-sm text-stone-600">
+          Select a course to continue. Each course has its own modules and progress.
         </p>
-      ) : null}
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {primary.modules?.map((m, i) =>
-          m.unlocked ? (
-            <Link
-              key={m.id}
-              to={`/courses/${primary.course.id}/modules/${m.id}`}
-              className="ui-card block rounded-2xl border border-stone-200/60 bg-white/90 px-5 py-5 shadow-card-elevated hover:border-clay/50"
-              onClick={() => setLockMsg('')}
-              style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
-            >
-              <ModuleCardBody m={m} />
-            </Link>
-          ) : (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() =>
-                setLockMsg(
-                  m.prerequisiteTitle
-                    ? `Complete "${m.prerequisiteTitle}" to unlock this module.`
-                    : 'This module is locked.',
-                )
-              }
-              className="ui-press w-full rounded-2xl border border-stone-200/50 bg-stone-50/60 px-5 py-5 text-left opacity-65 shadow-warm-sm transition-[opacity,transform] duration-200 ease-soft hover:opacity-80"
-            >
-              <ModuleCardBody m={m} locked />
-            </button>
-          ),
-        )}
       </div>
+
+      {rows.map((row) => (
+        <section key={row.enrollment?.id ?? row.course?.id} className="space-y-4">
+          <div className="ui-surface p-6">
+            <p className="ui-section-label">Course</p>
+            <h2 className="mt-2 font-display text-xl font-semibold text-stone-900">
+              {row.course?.title || 'Course'}
+            </h2>
+            <p className="mt-1 text-sm text-stone-600">{row.course?.description}</p>
+
+            <div className="mt-5">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-stone-700">Overall progress</span>
+                <span className="rounded-md bg-sage-50 px-2 py-0.5 text-xs font-semibold text-sage-700">
+                  {row.courseProgressPercent}%
+                </span>
+              </div>
+              <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-stone-100">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-sage to-deep transition-[width] duration-700 ease-soft-out"
+                  style={{ width: `${row.courseProgressPercent}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <DueDateBanner dueDate={row.enrollment?.dueDate || row.course?.dueDate} />
+
+          {lockMsg ? (
+            <p className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 shadow-warm-sm">
+              {lockMsg}
+            </p>
+          ) : null}
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {row.modules?.map((m, i) =>
+              m.unlocked ? (
+                <Link
+                  key={`${row.course?.id}-${m.id}`}
+                  to={`/courses/${row.course?.id}/modules/${m.id}`}
+                  className="ui-card block rounded-2xl border border-stone-200/60 bg-white/90 px-5 py-5 shadow-card-elevated hover:border-clay/50"
+                  onClick={() => setLockMsg('')}
+                  style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
+                >
+                  <ModuleCardBody m={m} />
+                </Link>
+              ) : (
+                <button
+                  key={`${row.course.id}-${m.id}`}
+                  type="button"
+                  onClick={() =>
+                    setLockMsg(
+                      m.prerequisiteTitle
+                        ? `Complete "${m.prerequisiteTitle}" to unlock this module.`
+                        : 'This module is locked.',
+                    )
+                  }
+                  className="ui-press w-full rounded-2xl border border-stone-200/50 bg-stone-50/60 px-5 py-5 text-left opacity-65 shadow-warm-sm transition-[opacity,transform] duration-200 ease-soft hover:opacity-80"
+                >
+                  <ModuleCardBody m={m} locked />
+                </button>
+              ),
+            )}
+          </div>
+        </section>
+      ))}
     </div>
   )
 }

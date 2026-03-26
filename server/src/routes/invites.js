@@ -12,6 +12,7 @@ import { getDb } from '../utils/firestoreDb.js'
 import { validatePasswordAgainstPolicy } from '../utils/passwordPolicy.js'
 import { getPublicConfig } from '../services/configService.js'
 import { serializeDoc } from '../utils/serialize.js'
+import { normalizeOptionalPhone, normalizePersonName } from '../utils/userFields.js'
 
 export const invitesRouter = Router()
 
@@ -79,10 +80,20 @@ invitesRouter.post('/accept', async (req, res, next) => {
       password,
     } = req.body || {}
 
-    if (!token || !firstName || !lastName || !password) {
+    if (!token || !password) {
       const err = new Error('Missing required fields')
       err.status = 400
       throw err
+    }
+    let fn
+    let ln
+    let phoneNorm = null
+    try {
+      fn = normalizePersonName(firstName, 'First name')
+      ln = normalizePersonName(lastName, 'Last name')
+      phoneNorm = normalizeOptionalPhone(phone)
+    } catch (e) {
+      return next(e)
     }
 
     const policy = getPublicConfig().passwordPolicy
@@ -129,7 +140,7 @@ invitesRouter.post('/accept', async (req, res, next) => {
       userRecord = await admin.auth().createUser({
         email,
         password,
-        displayName: `${firstName} ${lastName}`.trim(),
+        displayName: `${fn} ${ln}`.trim(),
         disabled: false,
       })
     } catch (e) {
@@ -148,9 +159,9 @@ invitesRouter.post('/accept', async (req, res, next) => {
     batch.set(userRef, {
       uid: userRecord.uid,
       email,
-      firstName: String(firstName).trim(),
-      lastName: String(lastName).trim(),
-      phone: phone ? String(phone).trim() : null,
+      firstName: fn,
+      lastName: ln,
+      phone: phoneNorm,
       role: 'trainee',
       status: 'active',
       inviteId: inviteRef.id,

@@ -10,6 +10,7 @@ import {
   validatePasswordAgainstPolicy,
 } from '../utils/passwordPolicy.js'
 import { serializeDoc } from '../utils/serialize.js'
+import { normalizeOptionalPhone, normalizePersonName } from '../utils/userFields.js'
 
 /**
  * @param {Record<string, unknown>} user serialized user row
@@ -114,14 +115,14 @@ usersRouter.post('/trainees', async (req, res, next) => {
     const email = String(req.body?.email || '')
       .toLowerCase()
       .trim()
-    const firstName = String(req.body?.firstName || '').trim()
-    const lastName = String(req.body?.lastName || '').trim()
-    const phone = req.body?.phone ? String(req.body.phone).trim() : null
+    const firstName = normalizePersonName(req.body?.firstName, 'First name')
+    const lastName = normalizePersonName(req.body?.lastName, 'Last name')
+    const phone = normalizeOptionalPhone(req.body?.phone)
     const courseId = req.body?.courseId ? String(req.body.courseId).trim() : null
     let temporaryPassword = req.body?.temporaryPassword
 
-    if (!email || !firstName || !lastName) {
-      const err = new Error('Email, first name, and last name are required')
+    if (!email) {
+      const err = new Error('Email is required')
       err.status = 400
       throw err
     }
@@ -223,6 +224,53 @@ usersRouter.post('/trainees', async (req, res, next) => {
         failures: e.failures,
       })
     }
+    next(e)
+  }
+})
+
+/** Issue a new temporary password for a trainee (e.g. admin missed copying the first one). */
+usersRouter.post('/trainees/:uid/regenerate-temporary-password', async (req, res, next) => {
+  try {
+    if (!getFirebaseAdmin()) {
+      const err = new Error('Firebase Admin is not configured')
+      err.status = 503
+      throw err
+    }
+    const db = getDb()
+    if (!db) {
+      const err = new Error('Database not configured')
+      err.status = 503
+      throw err
+    }
+    const uid = req.params.uid
+    const userDoc = await db.collection('users').doc(uid).get()
+    if (!userDoc.exists) {
+      const err = new Error('User not found')
+      err.status = 404
+      throw err
+    }
+    const row = userDoc.data()
+    if (row.role !== 'trainee') {
+      const err = new Error('Only trainee accounts support temporary password reset here')
+      err.status = 400
+      throw err
+    }
+    const policy = getPublicConfig().passwordPolicy
+    const password = generateRandomPasswordAgainstPolicy(policy)
+    await admin.auth().updateUser(uid, { password })
+    await db.collection('users').doc(uid).update({
+      mustChangePassword: true,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    let email = row.email
+    try {
+      const ar = await admin.auth().getUser(uid)
+      email = ar.email || email
+    } catch {
+      /* keep firestore email */
+    }
+    res.json({ email, temporaryPassword: password })
+  } catch (e) {
     next(e)
   }
 })

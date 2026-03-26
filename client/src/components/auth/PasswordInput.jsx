@@ -9,6 +9,7 @@ export function PasswordInput({
   showPolicy,
   autoComplete = 'new-password',
   disabled,
+  placeholder,
 }) {
   const id = useId()
   const [visible, setVisible] = useState(false)
@@ -25,6 +26,7 @@ export function PasswordInput({
           autoComplete={autoComplete}
           value={value}
           disabled={disabled}
+          placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
         />

@@ -3,8 +3,7 @@ import { useAuth } from '../contexts/AuthContext.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
 function defaultHomeForRole(role) {
-  if (role === 'admin') return '/admin/courses'
-  if (role === 'trainee') return '/dashboard'
+  void role
   return '/'
 }
 
