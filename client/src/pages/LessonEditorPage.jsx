@@ -3,8 +3,12 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import ReactQuill from 'react-quill'
 import 'react-quill/dist/quill.snow.css'
 import { api } from '../services/api.js'
+import { useToast } from '../contexts/ToastContext.jsx'
+import { TraineeVisibilityTip } from '../components/admin/TraineeVisibilityTip.jsx'
+import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
 export function LessonEditorPage() {
+  const { showToast } = useToast()
   const { lessonId } = useParams()
   const navigate = useNavigate()
   const [lesson, setLesson] = useState(null)
@@ -18,6 +22,8 @@ export function LessonEditorPage() {
   const [uploadProgress, setUploadProgress] = useState(null)
   const [statusSaving, setStatusSaving] = useState(null)
   const [statusFlash, setStatusFlash] = useState(null)
+  const [saveReadingBusy, setSaveReadingBusy] = useState(false)
+  const [saveQuizBusy, setSaveQuizBusy] = useState(false)
   const videoInputRef = useRef(null)
 
   const modules = useMemo(
@@ -51,27 +57,35 @@ export function LessonEditorPage() {
 
   async function saveReading() {
     setError('')
+    setSaveReadingBusy(true)
     try {
       await api.patch(`/api/lessons/${lessonId}`, {
         title,
         content: { body },
       })
       await load()
+      showToast({ variant: 'success', message: 'Reading lesson saved.' })
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed.')
+    } finally {
+      setSaveReadingBusy(false)
     }
   }
 
   async function saveQuizRef() {
     setError('')
+    setSaveQuizBusy(true)
     try {
       await api.patch(`/api/lessons/${lessonId}`, {
         title,
         content: { quizId },
       })
       await load()
+      showToast({ variant: 'success', message: 'Quiz reference saved.' })
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed.')
+    } finally {
+      setSaveQuizBusy(false)
     }
   }
 
@@ -108,6 +122,7 @@ export function LessonEditorPage() {
       })
       clearPendingVideo()
       await load()
+      showToast({ variant: 'success', message: 'Video uploaded.' })
     } catch (err) {
       setError(err.response?.data?.error || 'Upload failed.')
     } finally {
@@ -148,26 +163,36 @@ export function LessonEditorPage() {
   }
 
   if (!lesson) {
-    return <p className="text-sm text-stone-600">{error || 'Loading…'}</p>
+    if (error) {
+      return (
+        <p
+          className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-3 text-sm text-red-800 shadow-warm-sm"
+          role="alert"
+        >
+          {error}
+        </p>
+      )
+    }
+    return <LoadingSpinner label="Loading lesson" />
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <button
             type="button"
             onClick={() =>
               navigate(`/admin/courses/${lesson.courseId}/modules/${lesson.moduleId}`)
             }
-            className="text-xs font-semibold text-stone-500 hover:text-stone-800"
+            className="ui-press text-xs font-semibold text-stone-400 transition-colors duration-200 ease-soft hover:text-stone-700"
           >
             ← Module
           </button>
           <h1 className="font-display text-2xl font-semibold text-stone-900">
             Edit lesson
           </h1>
-          <p className="text-sm text-stone-600 capitalize">
+          <p className="mt-0.5 text-sm text-stone-500 capitalize">
             {lesson.type} · {lesson.status}
           </p>
         </div>
@@ -176,7 +201,7 @@ export function LessonEditorPage() {
             type="button"
             disabled={statusSaving !== null}
             onClick={() => setStatus('draft')}
-            className="rounded-full border border-stone-200 px-3 py-1.5 text-xs font-semibold text-stone-800 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="ui-btn-secondary !px-3 !py-1.5 !text-xs"
           >
             {statusSaving === 'draft' ? 'Saving…' : 'Mark draft'}
           </button>
@@ -184,7 +209,7 @@ export function LessonEditorPage() {
             type="button"
             disabled={statusSaving !== null}
             onClick={() => setStatus('published')}
-            className="rounded-full bg-deep px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="ui-btn-primary !px-3 !py-1.5 !text-xs"
           >
             {statusSaving === 'published' ? 'Saving…' : 'Mark published'}
           </button>
@@ -193,7 +218,7 @@ export function LessonEditorPage() {
 
       {statusFlash ? (
         <p
-          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
+          className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900 shadow-warm-sm"
           role="status"
           aria-live="polite"
         >
@@ -201,45 +226,60 @@ export function LessonEditorPage() {
         </p>
       ) : null}
 
+      <div className="max-w-3xl rounded-xl border border-sky-100 bg-sky-50/40 px-4 py-2.5 shadow-warm-sm">
+        <TraineeVisibilityTip variant="compact" />
+      </div>
+
+      {lesson.status === 'draft' ? (
+        <p className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-2.5 text-sm text-amber-950 shadow-warm-sm">
+          <strong>Draft lesson</strong> — trainees never see this until you click{' '}
+          <strong>Mark published</strong>. Publishing still requires a published course and module.
+        </p>
+      ) : null}
+
       {error ? (
-        <p className="text-sm text-red-700" role="alert">
+        <p
+          className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800 shadow-warm-sm"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
 
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-stone-700">Title</label>
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-stone-600">Title</label>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          className="w-full max-w-xl rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+          className="ui-input w-full max-w-xl rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
         />
       </div>
 
       {lesson.type === 'reading' ? (
         <div className="space-y-3">
-          <div className="lesson-editor-quill rounded-2xl border border-stone-200 bg-white p-2 shadow-sm">
+          <div className="lesson-editor-quill rounded-2xl border border-stone-200/60 bg-white p-2 shadow-warm-sm">
             <ReactQuill theme="snow" value={body} onChange={setBody} modules={modules} />
           </div>
           <button
             type="button"
+            disabled={saveReadingBusy}
             onClick={saveReading}
-            className="rounded-full bg-deep px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+            className="ui-btn-primary"
           >
-            Save reading
+            {saveReadingBusy ? 'Saving…' : 'Save reading'}
           </button>
         </div>
       ) : null}
 
       {lesson.type === 'video' ? (
-        <div className="space-y-3 rounded-2xl border border-stone-200/80 bg-white/80 p-4 shadow-sm">
+        <div className="ui-surface space-y-4 p-5">
           <p className="text-sm text-stone-600">
             Upload MP4, MOV, or WEBM. Current file on lesson:{' '}
             <span className="font-medium text-stone-900">
               {lesson.content?.fileName || 'None'}
             </span>
           </p>
-          <p className="text-xs text-stone-500">
+          <p className="text-xs text-stone-400">
             Choose a file to preview it here. Nothing uploads until you start the upload — so the wrong
             file never leaves your device by accident.
           </p>
@@ -252,7 +292,7 @@ export function LessonEditorPage() {
             className="block w-full max-w-xl text-sm text-stone-700 file:mr-3 file:rounded-full file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-stone-800 hover:file:bg-stone-200"
           />
           {pendingVideo ? (
-            <div className="space-y-3 rounded-xl border border-stone-200 bg-stone-50/80 p-3">
+            <div className="space-y-3 rounded-xl border border-stone-200/80 bg-stone-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="font-medium text-stone-900">{pendingVideo.name}</span>
                 <span className="text-xs text-stone-500">
@@ -263,7 +303,7 @@ export function LessonEditorPage() {
                 <video
                   src={pendingVideoPreviewUrl}
                   controls
-                  className="w-full max-w-xl rounded-lg border border-stone-200 bg-black"
+                  className="w-full max-w-xl rounded-lg border border-stone-200/60 bg-black shadow-warm-sm"
                 />
               ) : null}
               <div className="flex flex-wrap gap-2">
@@ -271,7 +311,7 @@ export function LessonEditorPage() {
                   type="button"
                   disabled={uploading}
                   onClick={clearPendingVideo}
-                  className="rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50 disabled:opacity-50"
+                  className="ui-btn-secondary"
                 >
                   Clear selection
                 </button>
@@ -279,7 +319,7 @@ export function LessonEditorPage() {
                   type="button"
                   disabled={uploading}
                   onClick={startPendingVideoUpload}
-                  className="rounded-full bg-deep px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                  className="ui-btn-primary"
                 >
                   Start upload
                 </button>
@@ -287,9 +327,9 @@ export function LessonEditorPage() {
             </div>
           ) : null}
           {uploading ? (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div
-                className="h-2 w-full max-w-xl overflow-hidden rounded-full bg-stone-200"
+                className="h-2.5 w-full max-w-xl overflow-hidden rounded-full bg-stone-200"
                 role="progressbar"
                 aria-valuenow={uploadProgress ?? 0}
                 aria-valuemin={0}
@@ -297,11 +337,11 @@ export function LessonEditorPage() {
                 aria-label="Upload progress"
               >
                 <div
-                  className="h-full rounded-full bg-deep transition-[width] duration-150"
+                  className="h-full rounded-full bg-gradient-to-r from-deep to-sage transition-[width] duration-300 ease-soft-out"
                   style={{ width: `${uploadProgress ?? 0}%` }}
                 />
               </div>
-              <p className="text-xs text-stone-600">
+              <p className="text-xs text-stone-500">
                 Uploading… {uploadProgress != null ? `${uploadProgress}%` : 'starting…'}
               </p>
             </div>
@@ -310,29 +350,30 @@ export function LessonEditorPage() {
             <video
               src={lesson.content.downloadUrl}
               controls
-              className="mt-2 w-full max-w-xl rounded-xl border border-stone-200"
+              className="mt-2 w-full max-w-xl rounded-xl border border-stone-200/60 shadow-warm-sm"
             />
           ) : null}
         </div>
       ) : null}
 
       {lesson.type === 'quiz' || lesson.type === 'exam' ? (
-        <div className="space-y-3 rounded-2xl border border-stone-200/80 bg-white/80 p-4 shadow-sm">
-          <label className="text-xs font-medium text-stone-700">Quiz / exam definition ID</label>
+        <div className="ui-surface space-y-4 p-5">
+          <label className="text-xs font-medium text-stone-600">Quiz / exam definition ID</label>
           <input
             value={quizId}
             onChange={(e) => setQuizId(e.target.value)}
             placeholder="quiz document id (Module 5)"
-            className="w-full max-w-xl rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+            className="ui-input w-full max-w-xl rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
           <button
             type="button"
+            disabled={saveQuizBusy}
             onClick={saveQuizRef}
-            className="rounded-full bg-deep px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+            className="ui-btn-primary"
           >
-            Save reference
+            {saveQuizBusy ? 'Saving…' : 'Save reference'}
           </button>
-          <p className="text-xs text-stone-500">
+          <p className="text-xs text-stone-400">
             Wire this to quiz definitions when the quiz engine is enabled.
           </p>
         </div>

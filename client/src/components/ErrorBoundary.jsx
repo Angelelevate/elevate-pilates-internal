@@ -17,16 +17,19 @@ export class ErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex min-h-svh flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="flex min-h-svh flex-col items-center justify-center gap-6 px-6 text-center motion-safe:animate-in-up motion-reduce:animate-none">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-deep text-xl font-bold text-white shadow-warm">
+            EP
+          </div>
           <h1 className="font-display text-2xl font-semibold text-stone-900">
             Something went wrong
           </h1>
-          <p className="max-w-md text-stone-600">
+          <p className="max-w-md text-stone-500">
             Please refresh the page. If the problem continues, contact support.
           </p>
           <button
             type="button"
-            className="rounded-full bg-deep px-5 py-2 text-sm font-medium text-white transition hover:opacity-90"
+            className="ui-btn-primary"
             onClick={() => window.location.reload()}
           >
             Reload

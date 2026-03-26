@@ -13,11 +13,21 @@ const envFile =
 dotenv.config({ path: path.resolve(process.cwd(), envFile) })
 dotenv.config()
 
+/** Browser Origin headers never include a trailing slash; normalize env URLs for CORS. */
+function trimOriginUrl(value) {
+  const s = (value || '').trim()
+  if (!s) return s
+  return s.replace(/\/+$/, '')
+}
+
 export function getEnv() {
   const port = Number(process.env.PORT) || 3001
-  const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173'
-  const frontendUrl =
-    process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173'
+  const clientOrigin = trimOriginUrl(
+    process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  )
+  const frontendUrl = trimOriginUrl(
+    process.env.FRONTEND_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  )
 
   return {
     nodeEnv,

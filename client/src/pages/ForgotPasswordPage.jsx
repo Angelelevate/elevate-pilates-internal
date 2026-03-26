@@ -30,18 +30,24 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="mx-auto max-w-md space-y-6">
-      <div>
+    <div className="mx-auto flex max-w-lg flex-col items-center py-4">
+      <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-deep text-lg font-bold text-white shadow-warm">
+        EP
+      </div>
+      <div className="w-full text-center">
         <h1 className="font-display text-2xl font-semibold text-stone-900">
           Reset password
         </h1>
-        <p className="mt-1 text-sm text-stone-600">
+        <p className="mt-1 text-sm text-stone-500">
           We will email you a link to choose a new password.
         </p>
       </div>
-      <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border border-stone-200/80 bg-white/80 p-6 shadow-sm backdrop-blur-sm">
-        <div className="space-y-1">
-          <label htmlFor="email" className="text-sm font-medium text-stone-800">
+      <form
+        onSubmit={onSubmit}
+        className="ui-surface mt-6 w-full space-y-5 p-7"
+      >
+        <div className="space-y-1.5">
+          <label htmlFor="email" className="text-sm font-medium text-stone-700">
             Email
           </label>
           <input
@@ -51,28 +57,34 @@ export function ForgotPasswordPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+            className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
         </div>
         {message ? (
-          <p className="text-sm text-emerald-800" role="status">
+          <p
+            className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-4 py-2.5 text-sm text-emerald-900"
+            role="status"
+          >
             {message}
           </p>
         ) : null}
         {error ? (
-          <p className="text-sm text-red-700" role="alert">
+          <p
+            className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800"
+            role="alert"
+          >
             {error}
           </p>
         ) : null}
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-full bg-deep py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+          className="ui-btn-primary w-full"
         >
           {busy ? 'Sending…' : 'Send reset email'}
         </button>
-        <p className="text-center text-sm text-stone-600">
-          <Link to="/login" className="font-medium text-deep underline-offset-2 hover:underline">
+        <p className="text-center text-sm text-stone-500">
+          <Link to="/login" className="ui-link font-medium text-deep underline-offset-2 hover:underline">
             Back to sign in
           </Link>
         </p>

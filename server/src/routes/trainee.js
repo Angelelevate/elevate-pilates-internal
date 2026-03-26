@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { requireNoForcedPasswordChange } from '../middleware/mustChangePasswordMiddleware.js'
 import { getVideoSignedUrl } from '../services/storage.js'
 import { getDb } from '../utils/firestoreDb.js'
-import { serializeDoc } from '../utils/serialize.js'
+import { serializeDoc, serializeValue } from '../utils/serialize.js'
 
 export const traineeRouter = Router()
 
@@ -43,23 +43,37 @@ async function loadPublishedModulesForCourse(db, courseId) {
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 }
 
-async function getLessonProgress(db, traineeId, lessonId) {
-  const id = progressDocId(traineeId, lessonId)
-  const doc = await db.collection('lessonProgress').doc(id).get()
-  return doc.exists ? { id: doc.id, ...doc.data() } : null
+/** Batched reads — avoids one round-trip per lesson (was the main dashboard slowdown). */
+async function loadLessonProgressMap(db, traineeId, lessonIds) {
+  const uniq = [...new Set(lessonIds.filter(Boolean))]
+  const map = new Map()
+  if (uniq.length === 0) return map
+  const chunkSize = 10
+  for (let i = 0; i < uniq.length; i += chunkSize) {
+    const chunk = uniq.slice(i, i + chunkSize)
+    const refs = chunk.map((lid) =>
+      db.collection('lessonProgress').doc(progressDocId(traineeId, lid)),
+    )
+    const snaps = await db.getAll(...refs)
+    for (let j = 0; j < chunk.length; j += 1) {
+      const doc = snaps[j]
+      if (doc.exists) map.set(chunk[j], { id: doc.id, ...doc.data() })
+    }
+  }
+  return map
 }
 
 function isLessonCompleted(progress) {
   return progress?.status === 'completed'
 }
 
-async function moduleCompletionState(db, traineeId, mod, lessons) {
+function moduleCompletionState(mod, lessons, progressByLessonId) {
   const criteria = mod.completionCriteria || {}
   const needExam = Boolean(criteria.examPassed)
   const publishedLessons = lessons.filter((l) => l.status === 'published')
   let allDone = true
   for (const l of publishedLessons) {
-    const p = await getLessonProgress(db, traineeId, l.id)
+    const p = progressByLessonId.get(l.id) ?? null
     if (!isLessonCompleted(p)) {
       allDone = false
       break
@@ -69,7 +83,7 @@ async function moduleCompletionState(db, traineeId, mod, lessons) {
   if (needExam) {
     const examLesson = publishedLessons.find((l) => l.type === 'exam')
     if (examLesson) {
-      const p = await getLessonProgress(db, traineeId, examLesson.id)
+      const p = progressByLessonId.get(examLesson.id) ?? null
       examOk = isLessonCompleted(p)
     } else {
       examOk = true
@@ -103,18 +117,17 @@ async function assertEnrollment(db, traineeId, courseId) {
   return active
 }
 
-async function computeModuleUnlock(db, traineeId, courseId, modules, lessonsByModuleId) {
+function computeModuleUnlock(modules, lessonsByModuleId, progressByLessonId) {
   const states = []
   for (let i = 0; i < modules.length; i += 1) {
     const mod = modules[i]
     const lessons = lessonsByModuleId.get(mod.id) || []
     const prev = i === 0 ? null : states[i - 1]
     const unlocked = i === 0 || (prev && prev.runtimeCompleted)
-    const { completed, status, allDone, examOk } = await moduleCompletionState(
-      db,
-      traineeId,
+    const { completed, status, allDone, examOk } = moduleCompletionState(
       mod,
       lessons,
+      progressByLessonId,
     )
     const runtimeCompleted = completed
     states.push({
@@ -122,7 +135,7 @@ async function computeModuleUnlock(db, traineeId, courseId, modules, lessonsByMo
       lessons,
       unlocked,
       status: unlocked ? (completed ? 'completed' : status) : 'locked',
-      completedLessonCount: await countCompletedLessons(db, traineeId, lessons),
+      completedLessonCount: countCompletedLessons(lessons, progressByLessonId),
       lessonCount: lessons.filter((l) => l.status === 'published').length,
       runtimeCompleted,
       prerequisiteTitle: i > 0 ? modules[i - 1].title : null,
@@ -133,10 +146,10 @@ async function computeModuleUnlock(db, traineeId, courseId, modules, lessonsByMo
   return states
 }
 
-async function countCompletedLessons(db, traineeId, lessons) {
+function countCompletedLessons(lessons, progressByLessonId) {
   let n = 0
   for (const l of lessons.filter((x) => x.status === 'published')) {
-    const p = await getLessonProgress(db, traineeId, l.id)
+    const p = progressByLessonId.get(l.id) ?? null
     if (isLessonCompleted(p)) n += 1
   }
   return n
@@ -180,17 +193,16 @@ traineeRouter.get('/courses', async (req, res, next) => {
         arr.push(l)
         lessonsByModule.set(l.moduleId, arr)
       }
-      const states = await computeModuleUnlock(
+      const progressByLessonId = await loadLessonProgressMap(
         db,
         req.user.uid,
-        courseId,
-        modules,
-        lessonsByModule,
+        allLessons.map((l) => l.id),
       )
+      const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
       const totalLessons = allLessons.length
       let completedLessons = 0
       for (const l of allLessons) {
-        const p = await getLessonProgress(db, req.user.uid, l.id)
+        const p = progressByLessonId.get(l.id)
         if (isLessonCompleted(p)) completedLessons += 1
       }
       const courseProgressPercent =
@@ -238,17 +250,16 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
       arr.push(l)
       lessonsByModule.set(l.moduleId, arr)
     }
-    const states = await computeModuleUnlock(
+    const progressByLessonId = await loadLessonProgressMap(
       db,
       req.user.uid,
-      courseId,
-      modules,
-      lessonsByModule,
+      allLessons.map((l) => l.id),
     )
+    const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
     const totalLessons = allLessons.length
     let completedLessons = 0
     for (const l of allLessons) {
-      const p = await getLessonProgress(db, req.user.uid, l.id)
+      const p = progressByLessonId.get(l.id)
       if (isLessonCompleted(p)) completedLessons += 1
     }
     res.json({
@@ -303,13 +314,12 @@ traineeRouter.get(
         arr.push(l)
         lessonsByModule.set(l.moduleId, arr)
       }
-      const states = await computeModuleUnlock(
+      const progressByLessonId = await loadLessonProgressMap(
         db,
         req.user.uid,
-        courseId,
-        modules,
-        lessonsByModule,
+        allLessons.map((l) => l.id),
       )
+      const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
       const state = states.find((s) => s.module.id === moduleId)
       if (!state || !state.unlocked) {
         const err = new Error('Module is locked')
@@ -321,7 +331,7 @@ traineeRouter.get(
         .sort((a, b) => (a.order || 0) - (b.order || 0))
       const lessonRows = []
       for (const l of lessons) {
-        const p = await getLessonProgress(db, req.user.uid, l.id)
+        const p = progressByLessonId.get(l.id) ?? null
         lessonRows.push({
           id: l.id,
           title: l.title,
@@ -371,13 +381,12 @@ traineeRouter.get(
         arr.push(l)
         lessonsByModule.set(l.moduleId, arr)
       }
-      const states = await computeModuleUnlock(
+      const progressByLessonId = await loadLessonProgressMap(
         db,
         req.user.uid,
-        courseId,
-        modules,
-        lessonsByModule,
+        allLessons.map((l) => l.id),
       )
+      const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
       const state = states.find((s) => s.module.id === moduleId)
       if (!state || !state.unlocked) {
         const err = new Error('Module is locked')
@@ -396,7 +405,7 @@ traineeRouter.get(
         throw err
       }
       const lesson = serializeDoc(lessonDoc)
-      const progress = await getLessonProgress(db, req.user.uid, lessonId)
+      const progress = progressByLessonId.get(lessonId) ?? null
       res.json({ lesson, progress })
     } catch (e) {
       next(e)
@@ -487,13 +496,15 @@ traineeRouter.post(
       const lastPosition = Number(req.body?.lastPosition) || 0
       const maxReached = Number(req.body?.maxReached) || 0
       const percentWatched = Number(req.body?.percentWatched) || 0
+      const watchedToEnd = Boolean(req.body?.watchedToEnd)
       const id = progressDocId(req.user.uid, lessonId)
       const ref = db.collection('lessonProgress').doc(id)
       const existingSnap = await ref.get()
       const createdAt = existingSnap.exists
         ? existingSnap.data().createdAt
         : FieldValue.serverTimestamp()
-      const completed = percentWatched >= 90
+      const completed = percentWatched >= 90 || watchedToEnd
+      const storedPercent = completed ? Math.max(percentWatched, 100) : percentWatched
       const patch = {
         lessonId,
         moduleId: lesson.moduleId,
@@ -501,7 +512,11 @@ traineeRouter.post(
         traineeId: req.user.uid,
         status: completed ? 'completed' : 'in_progress',
         lessonType: 'video',
-        videoProgress: { lastPosition, maxReached, percentWatched },
+        videoProgress: {
+          lastPosition,
+          maxReached: watchedToEnd ? Math.max(maxReached, lastPosition) : maxReached,
+          percentWatched: storedPercent,
+        },
         updatedAt: FieldValue.serverTimestamp(),
         createdAt,
       }
@@ -525,13 +540,15 @@ traineeRouter.get('/progress/courses/:courseId', async (req, res, next) => {
     const { courseId } = req.params
     await assertEnrollment(db, req.user.uid, courseId)
     const lessons = await loadPublishedLessonsForCourse(db, courseId)
+    const progressByLessonId = await loadLessonProgressMap(
+      db,
+      req.user.uid,
+      lessons.map((l) => l.id),
+    )
     const rows = []
     for (const l of lessons) {
-      const doc = await db
-        .collection('lessonProgress')
-        .doc(progressDocId(req.user.uid, l.id))
-        .get()
-      if (doc.exists) rows.push(serializeDoc(doc))
+      const p = progressByLessonId.get(l.id)
+      if (p) rows.push(serializeValue(p))
     }
     res.json(rows)
   } catch (e) {

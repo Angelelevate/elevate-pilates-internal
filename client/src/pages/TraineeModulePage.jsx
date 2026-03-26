@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../services/api.js'
+import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
 function typeIcon(type) {
   if (type === 'reading') return '📘'
@@ -33,57 +34,71 @@ export function TraineeModulePage() {
     }
   }, [courseId, moduleId])
 
-  if (error) return <p className="text-sm text-red-700">{error}</p>
-  if (!data) return <p className="text-sm text-stone-600">Loading module…</p>
+  if (error) {
+    return (
+      <p
+        className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-3 text-sm text-red-800 shadow-warm-sm"
+        role="alert"
+      >
+        {error}
+      </p>
+    )
+  }
+  if (!data) return <LoadingSpinner label="Loading module" />
 
   const continueTo = data.continueLessonId
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-          Module
-        </p>
-        <h1 className="font-display text-2xl font-semibold text-stone-900">
+      <div className="ui-surface p-6">
+        <p className="ui-section-label">Module</p>
+        <h1 className="mt-2 font-display text-2xl font-semibold text-stone-900">
           {data.module.title}
         </h1>
-        <p className="text-sm text-stone-600">{data.module.description}</p>
+        <p className="mt-1 text-sm text-stone-600">{data.module.description}</p>
+
+        {continueTo ? (
+          <Link
+            to={`/courses/${courseId}/modules/${moduleId}/lessons/${continueTo}`}
+            className="ui-btn-primary mt-5 inline-flex"
+          >
+            Continue learning
+          </Link>
+        ) : (
+          <p className="mt-4 text-sm text-stone-500">No lessons available in this module.</p>
+        )}
       </div>
 
-      {continueTo ? (
-        <Link
-          to={`/courses/${courseId}/modules/${moduleId}/lessons/${continueTo}`}
-          className="inline-flex rounded-full bg-deep px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-        >
-          Continue learning
-        </Link>
-      ) : (
-        <p className="text-sm text-stone-500">No lessons available in this module.</p>
-      )}
-
-      <ul className="space-y-2">
-        {data.lessons.map((lesson) => (
-          <li key={lesson.id}>
-            <Link
-              to={`/courses/${courseId}/modules/${moduleId}/lessons/${lesson.id}`}
-              className="flex items-center justify-between rounded-2xl border border-stone-200/80 bg-white/80 px-4 py-3 text-sm shadow-sm transition hover:border-clay/50"
+      <div>
+        <p className="ui-section-label mb-3 px-1">Lessons</p>
+        <ul className="space-y-2">
+          {data.lessons.map((lesson, index) => (
+            <li
+              key={lesson.id}
+              className="motion-safe:animate-in-up motion-reduce:animate-none"
+              style={{ animationDelay: `${Math.min(index, 10) * 40}ms` }}
             >
-              <div className="flex items-center gap-3">
-                <span className="text-lg" aria-hidden>
-                  {typeIcon(lesson.type)}
-                </span>
-                <div>
-                  <p className="font-medium text-stone-900">{lesson.title}</p>
-                  <p className="text-xs text-stone-500 capitalize">{lesson.status}</p>
+              <Link
+                to={`/courses/${courseId}/modules/${moduleId}/lessons/${lesson.id}`}
+                className="ui-card flex items-center justify-between rounded-2xl border border-stone-200/60 bg-white/90 px-5 py-4 text-sm hover:border-clay/40"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-50 text-base" aria-hidden>
+                    {typeIcon(lesson.type)}
+                  </span>
+                  <div>
+                    <p className="font-medium text-stone-900">{lesson.title}</p>
+                    <p className="text-xs text-stone-500 capitalize">{lesson.status}</p>
+                  </div>
                 </div>
-              </div>
-              {lesson.status === 'completed' ? (
-                <span className="text-emerald-700">Done</span>
-              ) : null}
-            </Link>
-          </li>
-        ))}
-      </ul>
+                {lesson.status === 'completed' ? (
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-100 text-xs font-semibold text-emerald-700">✓</span>
+                ) : null}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   )
 }

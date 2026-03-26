@@ -26,11 +26,11 @@ export function PasswordInput({
           value={value}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+          className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
         />
         <button
           type="button"
-          className="shrink-0 rounded-xl border border-stone-200 px-3 text-xs font-medium text-stone-600 hover:bg-stone-50"
+          className="ui-press shrink-0 rounded-xl border border-stone-200 px-3 text-xs font-medium text-stone-600 transition-colors duration-200 ease-soft hover:bg-stone-50"
           onClick={() => setVisible((v) => !v)}
         >
           {visible ? 'Hide' : 'Show'}

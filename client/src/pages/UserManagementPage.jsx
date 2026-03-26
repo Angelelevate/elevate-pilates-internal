@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api.js'
+import { useToast } from '../contexts/ToastContext.jsx'
 
 function StatusBadge({ status }) {
   const cls =
@@ -7,7 +8,7 @@ function StatusBadge({ status }) {
       ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
       : 'bg-stone-100 text-stone-700 border-stone-200'
   return (
-    <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
+    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
       {status}
     </span>
   )
@@ -30,7 +31,7 @@ function OnboardingBadge({ onboarding }) {
   const key = onboarding.source === 'admin' ? 'admin' : onboarding.source === 'invite' ? 'invite' : 'unknown'
   return (
     <span
-      className={`inline-block max-w-[11rem] truncate rounded-full border px-2 py-0.5 text-xs font-medium ${map[key]}`}
+      className={`inline-block max-w-[11rem] truncate rounded-full border px-2.5 py-0.5 text-xs font-medium ${map[key]}`}
       title={onboarding.label}
     >
       {onboarding.label}
@@ -51,7 +52,7 @@ function EnrollmentChips({ enrollments }) {
           {active.map((e) => (
             <span
               key={e.id}
-              className="inline-flex max-w-full items-center truncate rounded-lg border border-emerald-200 bg-emerald-50/90 px-2 py-0.5 text-xs font-medium text-emerald-900"
+              className="inline-flex max-w-full items-center truncate rounded-lg border border-emerald-200 bg-emerald-50/90 px-2.5 py-0.5 text-xs font-medium text-emerald-900"
               title={e.courseTitle}
             >
               {e.courseTitle}
@@ -69,6 +70,7 @@ function EnrollmentChips({ enrollments }) {
 }
 
 export function UserManagementPage() {
+  const { showToast } = useToast()
   const [users, setUsers] = useState([])
   const [filter, setFilter] = useState('')
   const [error, setError] = useState('')
@@ -80,6 +82,8 @@ export function UserManagementPage() {
   const [traineeTempPassword, setTraineeTempPassword] = useState('')
   const [traineeCourseId, setTraineeCourseId] = useState('')
   const [createdCredentials, setCreatedCredentials] = useState(null)
+  const [creatingTrainee, setCreatingTrainee] = useState(false)
+  const [togglingUid, setTogglingUid] = useState(null)
 
   async function refresh() {
     setError('')
@@ -107,17 +111,25 @@ export function UserManagementPage() {
 
   async function toggleUser(uid, next) {
     setError('')
+    setTogglingUid(uid)
     try {
       await api.patch(`/api/users/${uid}/status`, { status: next })
       await refresh()
+      showToast({
+        variant: 'success',
+        message: next === 'active' ? 'Account enabled.' : 'Account disabled.',
+      })
     } catch (err) {
       setError(err.response?.data?.error || 'Update failed.')
+    } finally {
+      setTogglingUid(null)
     }
   }
 
   async function createTrainee(e) {
     e.preventDefault()
     setError('')
+    setCreatingTrainee(true)
     try {
       const body = {
         email: traineeEmail.trim(),
@@ -136,6 +148,7 @@ export function UserManagementPage() {
       setTraineeTempPassword('')
       setTraineeCourseId('')
       await refresh()
+      showToast({ variant: 'success', message: 'Trainee account created.' })
       if (data.temporaryPassword) {
         setCreatedCredentials({
           email: data.email,
@@ -148,75 +161,79 @@ export function UserManagementPage() {
           err.response?.data?.failures?.[0]?.message ||
           'Could not create trainee.',
       )
+    } finally {
+      setCreatingTrainee(false)
     }
   }
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-semibold text-stone-900">
             Users
           </h1>
-          <p className="text-sm text-stone-600">
+          <p className="mt-1 text-sm text-stone-500">
             Create trainee accounts with a temporary password. They sign in, then must choose a new
-            password before using courses. Onboarding source and course enrollments are shown for
-            each trainee.
+            password before using courses.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setModalOpen(true)}
-          className="rounded-full bg-deep px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+          className="ui-btn-primary"
         >
           Add trainee
         </button>
       </div>
 
       {error ? (
-        <p className="text-sm text-red-700" role="alert">
+        <p
+          className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800 shadow-warm-sm"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
 
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-stone-900">Trainees & admins</h2>
+          <p className="ui-section-label">Trainees & admins</p>
           <input
             placeholder="Search…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-sm outline-none ring-deep/30 focus:ring-2"
+            className="ui-input rounded-xl border border-stone-200 bg-white px-3.5 py-2 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
           />
         </div>
-        <div className="overflow-x-auto rounded-2xl border border-stone-200/80 bg-white/80 shadow-sm">
+        <div className="ui-surface overflow-x-auto !p-0">
           <table className="min-w-[56rem] text-left text-sm">
-            <thead className="border-b border-stone-200 bg-stone-50/80 text-xs uppercase tracking-wide text-stone-500">
+            <thead className="border-b border-stone-200/60 bg-stone-50/60 text-xs uppercase tracking-wide text-stone-400">
               <tr>
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Role</th>
-                <th className="px-4 py-3 font-medium">Onboarding</th>
-                <th className="px-4 py-3 font-medium">Courses</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Actions</th>
+                <th className="px-5 py-3.5 font-medium">Name</th>
+                <th className="px-5 py-3.5 font-medium">Email</th>
+                <th className="px-5 py-3.5 font-medium">Role</th>
+                <th className="px-5 py-3.5 font-medium">Onboarding</th>
+                <th className="px-5 py-3.5 font-medium">Courses</th>
+                <th className="px-5 py-3.5 font-medium">Status</th>
+                <th className="px-5 py-3.5 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredUsers.map((u) => (
-                <tr key={u.uid} className="border-b border-stone-100 last:border-0">
-                  <td className="px-4 py-3">
+                <tr key={u.uid} className="border-b border-stone-100/80 last:border-0 transition-colors hover:bg-stone-50/50">
+                  <td className="px-5 py-3.5">
                     {u.firstName} {u.lastName}
                   </td>
-                  <td className="px-4 py-3 text-stone-700">{u.email}</td>
-                  <td className="px-4 py-3 capitalize">{u.role}</td>
-                  <td className="px-4 py-3 align-top">
+                  <td className="px-5 py-3.5 text-stone-600">{u.email}</td>
+                  <td className="px-5 py-3.5 capitalize">{u.role}</td>
+                  <td className="px-5 py-3.5 align-top">
                     <OnboardingBadge onboarding={u.onboarding} />
                   </td>
-                  <td className="px-4 py-3 align-top">
+                  <td className="px-5 py-3.5 align-top">
                     <EnrollmentChips enrollments={u.enrollments} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3.5">
                     <StatusBadge
                       status={
                         u.authDisabled || u.status === 'disabled'
@@ -225,11 +242,12 @@ export function UserManagementPage() {
                       }
                     />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3.5">
                     {u.role === 'trainee' ? (
                       <button
                         type="button"
-                        className="text-xs font-semibold text-deep underline-offset-2 hover:underline"
+                        disabled={togglingUid === u.uid}
+                        className="ui-press text-xs font-semibold text-deep underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
                         onClick={() =>
                           toggleUser(
                             u.uid,
@@ -239,9 +257,11 @@ export function UserManagementPage() {
                           )
                         }
                       >
-                        {u.authDisabled || u.status === 'disabled'
-                          ? 'Enable'
-                          : 'Disable'}
+                        {togglingUid === u.uid
+                          ? 'Updating…'
+                          : u.authDisabled || u.status === 'disabled'
+                            ? 'Enable'
+                            : 'Disable'}
                       </button>
                     ) : (
                       <span className="text-xs text-stone-400">—</span>
@@ -255,46 +275,46 @@ export function UserManagementPage() {
       </section>
 
       {modalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm motion-safe:animate-backdrop-in motion-reduce:animate-none">
+          <div className="ui-surface w-full max-w-md !border-stone-200 p-6 !shadow-warm-lg motion-safe:animate-modal-in motion-reduce:animate-none">
             <h3 className="font-display text-lg font-semibold text-stone-900">Add trainee</h3>
-            <p className="mt-1 text-xs text-stone-500">
+            <p className="mt-1 text-xs text-stone-400">
               Leave temporary password blank to generate one. Copy it from the confirmation dialog;
               it is not shown again.
             </p>
-            <form className="mt-4 space-y-3" onSubmit={createTrainee}>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-stone-800">Email</label>
+            <form className="mt-5 space-y-4" onSubmit={createTrainee}>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-stone-700">Email</label>
                 <input
                   required
                   type="email"
                   value={traineeEmail}
                   onChange={(e) => setTraineeEmail(e.target.value)}
-                  className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+                  className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                 />
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-stone-800">First name</label>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-stone-700">First name</label>
                   <input
                     required
                     value={traineeFirstName}
                     onChange={(e) => setTraineeFirstName(e.target.value)}
-                    className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+                    className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium text-stone-800">Last name</label>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-stone-700">Last name</label>
                   <input
                     required
                     value={traineeLastName}
                     onChange={(e) => setTraineeLastName(e.target.value)}
-                    className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+                    className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                   />
                 </div>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-stone-800">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-stone-700">
                   Temporary password (optional)
                 </label>
                 <input
@@ -303,17 +323,17 @@ export function UserManagementPage() {
                   value={traineeTempPassword}
                   onChange={(e) => setTraineeTempPassword(e.target.value)}
                   placeholder="Blank = auto-generate"
-                  className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+                  className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-stone-800">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-stone-700">
                   Auto-enroll course (optional)
                 </label>
                 <select
                   value={traineeCourseId}
                   onChange={(e) => setTraineeCourseId(e.target.value)}
-                  className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
+                  className="ui-input w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                 >
                   <option value="">None</option>
                   {courses.map((c) => (
@@ -326,16 +346,17 @@ export function UserManagementPage() {
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  className="rounded-full border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                  className="ui-btn-secondary"
                   onClick={() => setModalOpen(false)}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-full bg-deep px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+                  disabled={creatingTrainee}
+                  className="ui-btn-primary"
                 >
-                  Create account
+                  {creatingTrainee ? 'Creating…' : 'Create account'}
                 </button>
               </div>
             </form>
@@ -344,32 +365,30 @@ export function UserManagementPage() {
       ) : null}
 
       {createdCredentials ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/50 p-4 backdrop-blur-sm motion-safe:animate-backdrop-in motion-reduce:animate-none">
+          <div className="ui-surface w-full max-w-md !border-stone-200 p-6 !shadow-warm-lg motion-safe:animate-modal-in motion-reduce:animate-none">
             <h3 className="font-display text-lg font-semibold text-stone-900">
               Share credentials once
             </h3>
-            <p className="mt-2 text-sm text-stone-600">
+            <p className="mt-2 text-sm text-stone-500">
               Give the trainee their email and temporary password. They will be required to set a new
               password after signing in.
             </p>
-            <dl className="mt-4 space-y-2 rounded-xl bg-stone-50 p-4 text-sm">
+            <dl className="mt-4 space-y-3 rounded-xl bg-stone-50 p-4 text-sm">
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-stone-500">Email</dt>
-                <dd className="font-mono text-stone-900">{createdCredentials.email}</dd>
+                <dt className="ui-section-label">Email</dt>
+                <dd className="mt-1 font-mono text-stone-900">{createdCredentials.email}</dd>
               </div>
               <div>
-                <dt className="text-xs font-medium uppercase tracking-wide text-stone-500">
-                  Temporary password
-                </dt>
-                <dd className="break-all font-mono text-stone-900">
+                <dt className="ui-section-label">Temporary password</dt>
+                <dd className="mt-1 break-all font-mono text-stone-900">
                   {createdCredentials.temporaryPassword}
                 </dd>
               </div>
             </dl>
             <button
               type="button"
-              className="mt-4 w-full rounded-full bg-deep py-2.5 text-sm font-semibold text-white hover:opacity-90"
+              className="ui-btn-primary mt-5 w-full"
               onClick={() => setCreatedCredentials(null)}
             >
               Done

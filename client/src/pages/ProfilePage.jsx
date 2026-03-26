@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api.js'
+import { useToast } from '../contexts/ToastContext.jsx'
 import { PasswordInput } from '../components/auth/PasswordInput.jsx'
+import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 
 export function ProfilePage() {
+  const { showToast } = useToast()
   const [profile, setProfile] = useState(null)
   const [loaded, setLoaded] = useState(false)
   const [policy, setPolicy] = useState(null)
@@ -13,7 +16,8 @@ export function ProfilePage() {
   const [newPassword, setNewPassword] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -48,7 +52,7 @@ export function ProfilePage() {
     e.preventDefault()
     setMessage('')
     setError('')
-    setBusy(true)
+    setSavingProfile(true)
     try {
       const { data } = await api.patch('/api/profile', {
         firstName,
@@ -57,10 +61,11 @@ export function ProfilePage() {
       })
       setProfile(data)
       setMessage('Profile saved.')
+      showToast({ variant: 'success', message: 'Profile saved.' })
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed.')
     } finally {
-      setBusy(false)
+      setSavingProfile(false)
     }
   }
 
@@ -68,7 +73,7 @@ export function ProfilePage() {
     e.preventDefault()
     setMessage('')
     setError('')
-    setBusy(true)
+    setChangingPassword(true)
     try {
       await api.post('/api/profile/change-password', {
         currentPassword,
@@ -77,27 +82,31 @@ export function ProfilePage() {
       setCurrentPassword('')
       setNewPassword('')
       setMessage('Password updated.')
+      showToast({ variant: 'success', message: 'Password updated.' })
     } catch (err) {
       setError(err.response?.data?.error || 'Password change failed.')
     } finally {
-      setBusy(false)
+      setChangingPassword(false)
     }
   }
 
   if (!loaded) {
-    return <p className="text-sm text-stone-600">Loading profile…</p>
+    return <LoadingSpinner label="Loading profile" />
   }
 
   if (!profile) {
     return (
-      <div className="space-y-2">
+      <div className="ui-surface p-8">
         <h1 className="font-display text-2xl font-semibold text-stone-900">Profile</h1>
-        <p className="text-sm text-stone-600">
+        <p className="mt-2 text-sm text-stone-600">
           No profile document exists for this account yet. Trainee profiles are created when an admin
           adds you under Users or when you complete an invite link.
         </p>
         {error ? (
-          <p className="text-sm text-red-700" role="alert">
+          <p
+            className="motion-safe:animate-in-up motion-reduce:animate-none mt-4 rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800"
+            role="alert"
+          >
             {error}
           </p>
         ) : null}
@@ -106,87 +115,113 @@ export function ProfilePage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl space-y-10">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-stone-900">Profile</h1>
-        <p className="text-sm text-stone-600">Update your details and password.</p>
+    <div className="grid gap-6 lg:grid-cols-3">
+      <div className="lg:col-span-2 space-y-6">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-stone-900">Profile</h1>
+          <p className="mt-1 text-sm text-stone-500">Update your details and password.</p>
+        </div>
+
+        <form onSubmit={saveProfile} className="ui-surface space-y-5 p-6">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" className="text-sage">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Contact
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-stone-700">First name</label>
+              <input
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-stone-700">Last name</label>
+              <input
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-stone-700">Phone</label>
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+            />
+          </div>
+          <button type="submit" disabled={savingProfile} className="ui-btn-primary">
+            {savingProfile ? 'Saving…' : 'Save profile'}
+          </button>
+        </form>
+
+        <form onSubmit={changePassword} className="ui-surface space-y-5 p-6">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8" className="text-clay">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            Change password
+          </h2>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-stone-700">Current password</label>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
+            />
+          </div>
+          <PasswordInput
+            label="New password"
+            value={newPassword}
+            onChange={setNewPassword}
+            policy={policy}
+            showPolicy
+            autoComplete="new-password"
+          />
+          <button type="submit" disabled={changingPassword} className="ui-btn-primary !bg-stone-900">
+            {changingPassword ? 'Updating…' : 'Update password'}
+          </button>
+        </form>
       </div>
-      <form onSubmit={saveProfile} className="space-y-4 rounded-2xl border border-stone-200/80 bg-white/80 p-6 shadow-sm backdrop-blur-sm">
-        <h2 className="text-sm font-semibold text-stone-900">Contact</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-stone-800">First name</label>
-            <input
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-stone-800">Last name</label>
-            <input
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
-            />
+
+      <div className="space-y-4">
+        <div className="ui-surface p-5">
+          <p className="ui-section-label">Account</p>
+          <div className="mt-3 flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-deep/10 font-display text-sm font-bold text-deep">
+              {(firstName?.[0] || '?').toUpperCase()}{(lastName?.[0] || '').toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate font-medium text-stone-900">{firstName} {lastName}</p>
+              <p className="truncate text-xs text-stone-500">{profile.email}</p>
+            </div>
           </div>
         </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium text-stone-800">Phone</label>
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-full bg-deep px-5 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
-        >
-          Save profile
-        </button>
-      </form>
 
-      <form onSubmit={changePassword} className="space-y-4 rounded-2xl border border-stone-200/80 bg-white/80 p-6 shadow-sm backdrop-blur-sm">
-        <h2 className="text-sm font-semibold text-stone-900">Change password</h2>
-        <div className="space-y-1">
-          <label className="text-sm font-medium text-stone-800">Current password</label>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm outline-none ring-deep/30 focus:ring-2"
-          />
-        </div>
-        <PasswordInput
-          label="New password"
-          value={newPassword}
-          onChange={setNewPassword}
-          policy={policy}
-          showPolicy
-          autoComplete="new-password"
-        />
-        <button
-          type="submit"
-          disabled={busy}
-          className="rounded-full bg-stone-900 px-5 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
-        >
-          Update password
-        </button>
-      </form>
-
-      {message ? (
-        <p className="text-sm text-emerald-800" role="status">
-          {message}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="text-sm text-red-700" role="alert">
-          {error}
-        </p>
-      ) : null}
+        {message ? (
+          <p
+            className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-4 py-2.5 text-sm text-emerald-900 shadow-warm-sm"
+            role="status"
+          >
+            {message}
+          </p>
+        ) : null}
+        {error ? (
+          <p
+            className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl bg-red-50/90 px-4 py-2.5 text-sm text-red-800 shadow-warm-sm"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
     </div>
   )
 }
