@@ -1,6 +1,5 @@
 import path from 'path'
 import { Router } from 'express'
-import multer from 'multer'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getEnv } from '../config/env.js'
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
@@ -8,7 +7,12 @@ import {
   setCourseTreeStatus,
   validateCourseForPublish,
 } from '../services/cmsValidation.js'
-import { deleteStorageFile, getVideoSignedUrl, uploadVideoBuffer } from '../services/storage.js'
+import {
+  deleteStorageFile,
+  generateVideoWriteSignedUrl,
+  getVideoSignedUrl,
+  verifyUploadedLessonVideo,
+} from '../services/storage.js'
 import {
   ALLOWED_VIDEO_MIME_TYPES,
   DEFAULT_MAX_VIDEO_BYTES,
@@ -59,20 +63,32 @@ function assertDueDateNotInPast(isoOrTimestamp) {
   }
 }
 
-function makeUpload() {
-  const { maxVideoUploadBytes } = getEnv()
-  const maxBytes = maxVideoUploadBytes ?? DEFAULT_MAX_VIDEO_BYTES
-  return multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: maxBytes },
-    fileFilter: (req, file, cb) => {
-      if (ALLOWED_VIDEO_MIME_TYPES.includes(file.mimetype)) cb(null, true)
-      else cb(new Error('Unsupported video type'))
-    },
-  })
+function safeVideoBasename(fileName) {
+  const base =
+    path.basename(String(fileName || 'video')).replace(/[^a-zA-Z0-9._-]/g, '_') || 'video'
+  return base
 }
 
-const uploadVideo = makeUpload()
+function buildLessonVideoStoragePath(courseId, moduleId, lessonId, safeName) {
+  return `videos/${courseId}/${moduleId}/${lessonId}-${Date.now()}-${safeName}`
+}
+
+function storagePathBelongsToLesson(storagePath, { lessonId, courseId, moduleId }) {
+  const prefix = `videos/${courseId}/${moduleId}/`
+  if (!storagePath || typeof storagePath !== 'string' || !storagePath.startsWith(prefix)) {
+    return false
+  }
+  const rest = storagePath.slice(prefix.length)
+  return rest.startsWith(`${lessonId}-`)
+}
+
+function fileNameFromLessonStoragePath(storagePath, lessonId) {
+  const base = path.basename(storagePath)
+  const esc = String(lessonId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^${esc}-\\d+-(.+)$`)
+  const m = base.match(re)
+  return m ? m[1] : base
+}
 
 cmsRouter.post('/courses', async (req, res, next) => {
   try {
@@ -687,80 +703,139 @@ cmsRouter.delete('/lessons/:lessonId', async (req, res, next) => {
   }
 })
 
-cmsRouter.post(
-  '/lessons/:lessonId/upload-video',
-  (req, res, next) => {
-    uploadVideo.single('video')(req, res, (err) => {
-      if (err) {
-        const { maxVideoUploadBytes } = getEnv()
-        const maxBytes = maxVideoUploadBytes ?? DEFAULT_MAX_VIDEO_BYTES
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          const e = new Error(
-            `Video is too large. Maximum size is ${Math.round(maxBytes / (1024 * 1024))} MB.`,
-          )
-          e.status = 400
-          return next(e)
-        }
-        const e = new Error(err.message || 'Upload failed')
-        e.status = 400
-        return next(e)
-      }
-      next()
-    })
-  },
-  async (req, res, next) => {
-    try {
-      const db = dbRequired()
-      if (!req.file) {
-        const err = new Error('video file is required')
-        err.status = 400
-        throw err
-      }
-      const ref = db.collection('lessons').doc(req.params.lessonId)
-      const doc = await ref.get()
-      if (!doc.exists) {
-        const err = new Error('Lesson not found')
-        err.status = 404
-        throw err
-      }
-      const data = doc.data()
-      if (data.type !== 'video') {
-        const err = new Error('Lesson is not a video lesson')
-        err.status = 400
-        throw err
-      }
-      const courseId = data.courseId
-      const moduleId = data.moduleId
-      const safeName =
-        path.basename(req.file.originalname || 'video').replace(/[^a-zA-Z0-9._-]/g, '_') ||
-        'video'
-      const destPath = `videos/${courseId}/${moduleId}/${req.params.lessonId}-${Date.now()}-${safeName}`
-      if (data.content?.storagePath) {
-        await deleteStorageFile(data.content.storagePath)
-      }
-      await uploadVideoBuffer({
-        destPath,
-        buffer: req.file.buffer,
-        contentType: req.file.mimetype,
-      })
-      const downloadUrl = await getVideoSignedUrl(destPath)
-      const content = {
-        storagePath: destPath,
-        downloadUrl,
-        fileName: safeName,
-        mimeType: req.file.mimetype,
-        durationSeconds: null,
-      }
-      await ref.update({
-        content,
-        updatedAt: FieldValue.serverTimestamp(),
-      })
-      res.json(serializeDoc(await ref.get()))
-    } catch (e) {
-      next(e)
+/** Start a browser-direct upload (signed PUT to GCS; no file bytes through this server). */
+cmsRouter.post('/lessons/:lessonId/video-upload-session', async (req, res, next) => {
+  try {
+    const db = dbRequired()
+    const { fileName, contentType, fileSize } = req.body || {}
+    const { maxVideoUploadBytes } = getEnv()
+    const maxBytes = maxVideoUploadBytes ?? DEFAULT_MAX_VIDEO_BYTES
+
+    if (fileSize == null || Number.isNaN(Number(fileSize))) {
+      const err = new Error('fileSize is required')
+      err.status = 400
+      throw err
     }
-  },
-)
+    const size = Number(fileSize)
+    if (size < 1) {
+      const err = new Error('Invalid file size')
+      err.status = 400
+      throw err
+    }
+    if (size > maxBytes) {
+      const err = new Error(
+        `Video is too large. Maximum size is ${Math.round(maxBytes / (1024 * 1024))} MB.`,
+      )
+      err.status = 400
+      throw err
+    }
+
+    const mime = String(contentType || '')
+      .trim()
+      .toLowerCase()
+    if (!ALLOWED_VIDEO_MIME_TYPES.includes(mime)) {
+      const err = new Error('Unsupported video type')
+      err.status = 400
+      throw err
+    }
+
+    const ref = db.collection('lessons').doc(req.params.lessonId)
+    const doc = await ref.get()
+    if (!doc.exists) {
+      const err = new Error('Lesson not found')
+      err.status = 404
+      throw err
+    }
+    const data = doc.data()
+    if (data.type !== 'video') {
+      const err = new Error('Lesson is not a video lesson')
+      err.status = 400
+      throw err
+    }
+    const courseId = data.courseId
+    const moduleId = data.moduleId
+    const safeName = safeVideoBasename(fileName)
+    const destPath = buildLessonVideoStoragePath(courseId, moduleId, req.params.lessonId, safeName)
+
+    const { url, contentType: ct, expiresInSeconds } = await generateVideoWriteSignedUrl(
+      destPath,
+      mime,
+    )
+
+    res.json({
+      uploadUrl: url,
+      storagePath: destPath,
+      contentType: ct,
+      maxBytes,
+      expiresInSeconds,
+    })
+  } catch (e) {
+    next(e)
+  }
+})
+
+/** Finalize after the browser PUTs the file to the signed URL. */
+cmsRouter.post('/lessons/:lessonId/video-upload-complete', async (req, res, next) => {
+  try {
+    const db = dbRequired()
+    const { storagePath } = req.body || {}
+    if (!storagePath || typeof storagePath !== 'string') {
+      const err = new Error('storagePath is required')
+      err.status = 400
+      throw err
+    }
+
+    const ref = db.collection('lessons').doc(req.params.lessonId)
+    const doc = await ref.get()
+    if (!doc.exists) {
+      const err = new Error('Lesson not found')
+      err.status = 404
+      throw err
+    }
+    const data = doc.data()
+    if (data.type !== 'video') {
+      const err = new Error('Lesson is not a video lesson')
+      err.status = 400
+      throw err
+    }
+    const lessonId = req.params.lessonId
+    const ok = storagePathBelongsToLesson(storagePath, {
+      lessonId,
+      courseId: data.courseId,
+      moduleId: data.moduleId,
+    })
+    if (!ok) {
+      const err = new Error('Invalid storage path for this lesson')
+      err.status = 400
+      throw err
+    }
+
+    const { maxVideoUploadBytes } = getEnv()
+    const maxBytes = maxVideoUploadBytes ?? DEFAULT_MAX_VIDEO_BYTES
+    const { mime } = await verifyUploadedLessonVideo(storagePath, maxBytes)
+    const previousPath = data.content?.storagePath
+    if (previousPath && previousPath !== storagePath) {
+      await deleteStorageFile(previousPath)
+    }
+
+    const downloadUrl = await getVideoSignedUrl(storagePath)
+    const safeName = fileNameFromLessonStoragePath(storagePath, lessonId)
+    const content = {
+      storagePath,
+      downloadUrl,
+      fileName: safeName,
+      mimeType: mime,
+      durationSeconds: null,
+    }
+    await ref.update({
+      content,
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    res.json(serializeDoc(await ref.get()))
+  } catch (e) {
+    next(e)
+  }
+})
 
 cmsRouter.delete('/lessons/:lessonId/video', async (req, res, next) => {
   try {

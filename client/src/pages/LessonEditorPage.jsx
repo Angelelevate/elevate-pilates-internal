@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import ReactQuill from 'react-quill'
 import 'react-quill/dist/quill.snow.css'
 import { api } from '../services/api.js'
+import { putFileToSignedUrl } from '../services/directStorageUpload.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { TraineeVisibilityTip } from '../components/admin/TraineeVisibilityTip.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
@@ -132,20 +133,28 @@ export function LessonEditorPage() {
     setUploadProgress(0)
     setError('')
     try {
-      const fd = new FormData()
-      fd.append('video', pendingVideo)
-      await api.post(`/api/lessons/${lessonId}/upload-video`, fd, {
-        timeout: 900_000,
-        onUploadProgress: (ev) => {
-          if (ev.total) setUploadProgress(Math.round((ev.loaded * 100) / ev.total))
-        },
+      const { data: session } = await api.post(`/api/lessons/${lessonId}/video-upload-session`, {
+        fileName: pendingVideo.name,
+        contentType: pendingVideo.type || 'video/mp4',
+        fileSize: pendingVideo.size,
+      })
+      await putFileToSignedUrl(
+        session.uploadUrl,
+        pendingVideo,
+        session.contentType,
+        (pct) => setUploadProgress(pct),
+      )
+      await api.post(`/api/lessons/${lessonId}/video-upload-complete`, {
+        storagePath: session.storagePath,
       })
       clearPendingVideo()
       setVideoReplaceMode(false)
       await load()
       showToast({ variant: 'success', message: 'Video uploaded.' })
     } catch (err) {
-      setError(err.response?.data?.error || 'Upload failed.')
+      const msg = err.response?.data?.error || err.message || 'Upload failed.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
     } finally {
       setUploading(false)
       setUploadProgress(null)

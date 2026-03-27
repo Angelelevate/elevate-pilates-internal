@@ -2,7 +2,7 @@ export const PLATFORM_NAME = 'Elevate Pilates LMS'
 
 export const DEFAULT_INVITE_EXPIRY_DAYS = 7
 
-/** ~200MB+ uploads are common; keep headroom for HD short clips (memory upload path). */
+/** Max lesson video size (browser uploads directly to Storage; server only validates metadata). */
 export const DEFAULT_MAX_VIDEO_BYTES = 750 * 1024 * 1024
 
 export const ALLOWED_VIDEO_MIME_TYPES = [
