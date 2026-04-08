@@ -485,16 +485,13 @@ export function LessonEditorPage() {
 
       {lesson.type === 'quiz' || lesson.type === 'exam' ? (
         <div className="ui-surface space-y-5 p-5">
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-stone-600">Quiz / exam definition ID</label>
-            <input
-              value={quizId}
-              onChange={(e) => setQuizId(e.target.value)}
-              placeholder="quiz document id (Module 5)"
-              className="ui-input w-full max-w-xl rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-            />
-          </div>
-          <div>
+          <QuizSelector
+            lessonType={lesson.type}
+            courseId={lesson.courseId}
+            value={quizId}
+            onChange={setQuizId}
+          />
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               disabled={saveQuizBusy}
@@ -503,10 +500,13 @@ export function LessonEditorPage() {
             >
               {saveQuizBusy ? 'Saving…' : 'Save reference'}
             </button>
+            <Link
+              to="/admin/quizzes"
+              className="text-sm font-semibold text-deep underline-offset-2 hover:underline"
+            >
+              Manage assessments
+            </Link>
           </div>
-          <p className="text-xs text-stone-400">
-            Wire this to quiz definitions when the quiz engine is enabled.
-          </p>
         </div>
       ) : null}
 
@@ -518,6 +518,56 @@ export function LessonEditorPage() {
           Open learner preview (admin)
         </Link>
       </p>
+    </div>
+  )
+}
+
+function QuizSelector({ lessonType, courseId, value, onChange }) {
+  const [quizzes, setQuizzes] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get('/api/quizzes', { params: { courseId, status: 'published' } })
+      .then(({ data }) => {
+        const filtered = data.filter((q) => q.type === lessonType)
+        setQuizzes(filtered)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [courseId, lessonType])
+
+  const matchType = lessonType === 'exam' ? 'Exam' : 'Quiz'
+
+  if (loading) return <p className="text-xs text-stone-400">Loading assessments…</p>
+
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-stone-600">
+        Link a published {matchType.toLowerCase()}
+      </label>
+      {quizzes.length === 0 ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900">
+          No published {matchType.toLowerCase()}s found for this course. <Link to="/admin/quizzes" className="font-semibold text-deep underline">Create one</Link>.
+        </div>
+      ) : (
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="ui-input w-full max-w-xl"
+        >
+          <option value="">— Select {matchType.toLowerCase()} —</option>
+          {quizzes.map((q) => (
+            <option key={q.id} value={q.id}>
+              {q.title} ({q.questionCount} questions, {q.totalPoints} pts)
+            </option>
+          ))}
+        </select>
+      )}
+      {value && (
+        <p className="text-xs text-stone-400">
+          Linked: <span className="font-mono">{value}</span>
+        </p>
+      )}
     </div>
   )
 }

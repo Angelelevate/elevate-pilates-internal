@@ -25,6 +25,7 @@ import {
   assertCourseTextLimits,
   assertCourseTitleLength,
 } from '../utils/cmsLimits.js'
+import { initializeProgress } from '../services/progressEngine.js'
 
 export const cmsRouter = Router()
 
@@ -925,6 +926,12 @@ cmsRouter.post('/courses/:courseId/enrollments', async (req, res, next) => {
         completedAt: null,
         updatedAt: FieldValue.serverTimestamp(),
       })
+      // Initialize progress tracking for this enrollment
+      try {
+        await initializeProgress(db, uid, courseId)
+      } catch (progErr) {
+        console.warn('[progress] Init failed for trainee:', uid, progErr?.message)
+      }
       created.push(serializeDoc(await ref.get()))
     }
     res.status(201).json(created)

@@ -5,6 +5,7 @@ import { requireNoForcedPasswordChange } from '../middleware/mustChangePasswordM
 import { getVideoSignedUrl } from '../services/storage.js'
 import { getDb } from '../utils/firestoreDb.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
+import { recalculateModuleProgress, recalculateCourseProgress } from '../services/progressEngine.js'
 
 export const traineeRouter = Router()
 
@@ -479,7 +480,7 @@ traineeRouter.post(
       if (lesson.type === 'reading' || lesson.type === 'quiz') {
         // ok
       } else if (lesson.type === 'exam') {
-        const err = new Error('Complete the exam via the quiz engine when available')
+        const err = new Error('Complete the exam via the quiz engine')
         err.status = 400
         throw err
       } else if (lesson.type === 'video') {
@@ -504,6 +505,13 @@ traineeRouter.post(
         },
         { merge: true },
       )
+      // Trigger progress recalculation
+      try {
+        await recalculateModuleProgress(db, req.user.uid, lesson.moduleId)
+        await recalculateCourseProgress(db, req.user.uid, courseId)
+      } catch (progressErr) {
+        console.warn('[progress] Recalculation failed after lesson complete:', progressErr?.message)
+      }
       res.json(serializeDoc(await ref.get()))
     } catch (e) {
       next(e)
@@ -569,6 +577,15 @@ traineeRouter.post(
         patch.completedAt = FieldValue.delete()
       }
       await ref.set(patch, { merge: true })
+      // Trigger progress recalculation on video completion
+      if (completed) {
+        try {
+          await recalculateModuleProgress(db, req.user.uid, lesson.moduleId)
+          await recalculateCourseProgress(db, req.user.uid, courseId)
+        } catch (progressErr) {
+          console.warn('[progress] Recalculation failed after video progress:', progressErr?.message)
+        }
+      }
       const saved = await ref.get()
       res.json(serializeDoc(saved))
     } catch (e) {

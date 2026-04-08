@@ -155,13 +155,19 @@ export function TraineeLessonPage() {
           <QuizPane
             lessonId={lessonId}
             quizId={doc.content?.quizId}
+            moduleId={moduleId}
+            courseId={courseId}
             onDone={refresh}
-            alreadyComplete={progress?.status === 'completed'}
-            onNavLockChange={setLessonNavLocked}
           />
         ) : null}
         {doc.type === 'exam' ? (
-          <ExamPane quizId={doc.content?.quizId} />
+          <ExamPane
+            lessonId={lessonId}
+            quizId={doc.content?.quizId}
+            moduleId={moduleId}
+            courseId={courseId}
+            onDone={refresh}
+          />
         ) : null}
 
         <nav className="flex flex-wrap items-stretch gap-3 border-t border-stone-200/60 pt-5">
@@ -475,55 +481,52 @@ function VideoPane({
   )
 }
 
-function QuizPane({ lessonId, quizId, onDone, alreadyComplete, onNavLockChange }) {
-  const { showToast } = useToast()
-  const [busy, setBusy] = useState(false)
-  const [markedThisSession, setMarkedThisSession] = useState(false)
-  const showCompleted = Boolean(alreadyComplete || markedThisSession)
-
-  async function complete() {
-    onNavLockChange?.(true)
-    setBusy(true)
-    try {
-      await api.post(`/api/my/progress/lessons/${lessonId}/complete`)
-      setMarkedThisSession(true)
-      await onDone()
-      showToast({ variant: 'success', message: 'Lesson marked complete.' })
-    } catch {
-      showToast({ variant: 'error', message: 'Could not save. Try again.' })
-    } finally {
-      setBusy(false)
-      onNavLockChange?.(false)
-    }
+function QuizPane({ lessonId, quizId, moduleId, courseId, onDone }) {
+  if (!quizId) {
+    return (
+      <div className="ui-surface p-5 text-sm text-stone-600">
+        No quiz is linked to this lesson yet. Contact your administrator.
+      </div>
+    )
   }
-
   return (
-    <div className="ui-surface space-y-4 p-5">
-      <p className="text-sm text-stone-600">
-        Practice quiz {quizId ? `(id: ${quizId})` : ''}. The full quiz player ships in Module 5.
-      </p>
-      <button
-        type="button"
-        disabled={busy || showCompleted}
-        onClick={complete}
-        className="ui-btn-primary min-h-[44px] disabled:pointer-events-none disabled:opacity-60"
-      >
-        {busy ? 'Saving…' : showCompleted ? 'Completed' : 'Mark lesson complete'}
-      </button>
-    </div>
+    <QuizRendererLazy
+      quizId={quizId}
+      lessonId={lessonId}
+      moduleId={moduleId}
+      courseId={courseId}
+      quizType="quiz"
+      onComplete={onDone}
+    />
   )
 }
 
-function ExamPane({ quizId }) {
+function ExamPane({ lessonId, quizId, moduleId, courseId, onDone }) {
+  if (!quizId) {
+    return (
+      <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-5 text-sm text-amber-950 shadow-warm-sm">
+        <p className="font-semibold">Formal exam</p>
+        <p>No exam is linked to this lesson yet. Contact your administrator.</p>
+      </div>
+    )
+  }
   return (
-    <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-5 text-sm text-amber-950 shadow-warm-sm">
-      <p className="font-semibold">Formal exam</p>
-      <p>
-        Graded exams will run inside the Module 5 quiz engine
-        {quizId ? ` (id: ${quizId})` : ''}. Until then, ask your administrator about completion
-        requirements.
-      </p>
-      {/*TODO(Module 5): Mount exam player and call completion only on pass. */}
-    </div>
+    <QuizRendererLazy
+      quizId={quizId}
+      lessonId={lessonId}
+      moduleId={moduleId}
+      courseId={courseId}
+      quizType="exam"
+      onComplete={onDone}
+    />
   )
+}
+
+function QuizRendererLazy(props) {
+  const [Comp, setComp] = useState(null)
+  useEffect(() => {
+    import('../components/quiz/QuizRenderer.jsx').then((m) => setComp(() => m.QuizRenderer))
+  }, [])
+  if (!Comp) return <p className="text-sm text-stone-500">Loading assessment…</p>
+  return <Comp {...props} />
 }

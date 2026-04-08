@@ -46,11 +46,13 @@
 
 @layer components {
   .ui-input {
+    @apply rounded-xl border border-stone-300 bg-white px-3.5 py-2.5 text-sm text-stone-800 outline-none;
+    @apply ring-deep/30 placeholder:text-stone-400;
     @apply transition-[border-color,box-shadow] duration-200 ease-soft-out;
   }
 
   .ui-input:focus {
-    @apply shadow-warm-sm;
+    @apply border-deep/40 ring-2 shadow-warm-sm;
   }
 
   .ui-press {

@@ -34,6 +34,12 @@ function NavIcon({ name }) {
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
       </svg>
     ),
+    guide: (
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.8">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+        <circle cx="17" cy="4" r="3" fill="currentColor" stroke="none" />
+      </svg>
+    ),
   }
   return icons[name] || null
 }
@@ -48,8 +54,13 @@ function SidebarNav({ onNavigate }) {
 
   if (user && role === 'admin') {
     links.push(
+      { to: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard' },
       { to: '/admin/courses', label: 'Courses', icon: 'courses' },
+      { to: '/admin/quizzes', label: 'Assessments', icon: 'courses' },
+      { to: '/admin/trainees', label: 'Trainees', icon: 'users' },
       { to: '/admin/users', label: 'Users', icon: 'users' },
+      { to: '/admin/reminders/settings', label: 'Reminders', icon: 'home' },
+      { to: '/admin/guide', label: 'Platform Guide', icon: 'guide' },
     )
   } else if (user && role === 'trainee') {
     if (profile?.mustChangePassword === true) {

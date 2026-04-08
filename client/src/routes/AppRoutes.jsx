@@ -17,6 +17,14 @@ import { AdminLessonPreviewPage } from '../pages/AdminLessonPreviewPage.jsx'
 import { UserManagementPage } from '../pages/UserManagementPage.jsx'
 import { ProfilePage } from '../pages/ProfilePage.jsx'
 import { NotFoundPage } from '../pages/NotFoundPage.jsx'
+import { QuizListPage } from '../pages/QuizListPage.jsx'
+import { QuizEditorPage } from '../pages/QuizEditorPage.jsx'
+import { AdminDashboardPage } from '../pages/AdminDashboardPage.jsx'
+import { TraineeListPage } from '../pages/TraineeListPage.jsx'
+import { TraineeDetailPage } from '../pages/TraineeDetailPage.jsx'
+import { OverdueReportPage, AssessmentReportPage, CourseCompletionReportPage } from '../pages/ReportsPage.jsx'
+import { ReminderSettingsPage, ReminderLogPage, PendingRemindersPage } from '../pages/ReminderPages.jsx'
+import { AdminGuidePage } from '../pages/AdminGuidePage.jsx'
 
 export function AppRoutes() {
   return (
@@ -65,7 +73,15 @@ export function AppRoutes() {
 
         <Route
           path="admin"
-          element={<Navigate to="/admin/courses" replace />}
+          element={<Navigate to="/admin/dashboard" replace />}
+        />
+        <Route
+          path="admin/dashboard"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <AdminDashboardPage />
+            </ProtectedRoute>
+          }
         />
         <Route
           path="admin/courses"
@@ -108,10 +124,103 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="admin/quizzes"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <QuizListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/quizzes/:quizId"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <QuizEditorPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="admin/users"
           element={
             <ProtectedRoute roles={['admin']}>
               <UserManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/trainees"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <TraineeListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/trainees/:traineeId"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <TraineeDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/reports/overdue"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <OverdueReportPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/reports/assessments"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <AssessmentReportPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/reports/completion"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <CourseCompletionReportPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/reminders"
+          element={<Navigate to="/admin/reminders/settings" replace />}
+        />
+        <Route
+          path="admin/reminders/settings"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <ReminderSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/reminders/log"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <ReminderLogPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/reminders/pending"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <PendingRemindersPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="admin/guide"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <AdminGuidePage />
             </ProtectedRoute>
           }
         />
