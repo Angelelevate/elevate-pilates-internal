@@ -140,11 +140,18 @@ async function recalcQuizTotals(db, quizId) {
   const snap = await db.collection('questions').where('quizId', '==', quizId).get()
   let totalPoints = 0
   for (const d of snap.docs) totalPoints += (d.data().points || 1)
-  await db.collection('quizzes').doc(quizId).update({
+  const update = {
     totalPoints,
     questionCount: snap.size,
     updatedAt: FieldValue.serverTimestamp(),
-  })
+  }
+  if (snap.size === 0) {
+    const quizDoc = await db.collection('quizzes').doc(quizId).get()
+    if (quizDoc.exists && quizDoc.data().status === 'published') {
+      update.status = 'draft'
+    }
+  }
+  await db.collection('quizzes').doc(quizId).update(update)
 }
 
 quizzesRouter.post('/:quizId/questions', async (req, res, next) => {

@@ -215,7 +215,7 @@ traineeRouter.get('/courses', async (req, res, next) => {
     const out = []
     for (const d of snap.docs) {
       const enData = d.data()
-      if (enData.status !== 'active') continue
+      if (enData.status !== 'active' && enData.status !== 'completed') continue
       const courseDoc = await db.collection('courses').doc(enData.courseId).get()
       if (!courseDoc.exists || courseDoc.data().status !== 'published') continue
       const courseId = enData.courseId

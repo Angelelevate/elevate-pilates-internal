@@ -21,6 +21,7 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
   const [timeLeft, setTimeLeft] = useState(null)
   const timerRef = useRef(null)
   const autoSubmittedRef = useRef(false)
+  const handleSubmitRef = useRef(null)
 
   const loadHistory = useCallback(async () => {
     if (!quizId) return
@@ -89,7 +90,7 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
           clearInterval(timerRef.current)
           if (!autoSubmittedRef.current) {
             autoSubmittedRef.current = true
-            handleSubmit(true)
+            handleSubmitRef.current?.(true)
           }
           return 0
         }
@@ -154,6 +155,7 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
       showToast({ variant: 'error', message: err.response?.data?.error || 'Submission failed.' })
     } finally { setSubmitting(false) }
   }
+  handleSubmitRef.current = handleSubmit
 
   function formatTime(seconds) {
     const m = Math.floor(seconds / 60)
@@ -219,13 +221,13 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
           {isExam && results?.passed === false && (
             <div className="mt-3 rounded-xl bg-amber-50/80 px-4 py-2 text-sm text-amber-900">
               {history.filter((a) => a.status === 'submitted').length < 3
-                ? <button type="button" onClick={() => setPhase('start')} className="font-semibold text-deep underline">Retake Exam</button>
+                ? <button type="button" onClick={() => loadHistory()} className="font-semibold text-deep underline">Retake Exam</button>
                 : <span>Maximum attempts reached. Contact your admin.</span>
               }
             </div>
           )}
           {quizType === 'quiz' && (
-            <button type="button" onClick={() => setPhase('start')} className="mt-3 text-sm font-semibold text-deep hover:underline">
+            <button type="button" onClick={() => loadHistory()} className="mt-3 text-sm font-semibold text-deep hover:underline">
               Retake Quiz
             </button>
           )}

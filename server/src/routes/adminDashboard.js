@@ -173,49 +173,88 @@ adminDashboardRouter.get('/trainees', async (req, res, next) => {
     const enrollments = enSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
 
     const now = new Date()
-    const rows = []
+
+    // Group enrollments by trainee
+    /** @type {Map<string, { enrollments: Array, user: Record<string, unknown> | null }>} */
+    const traineeMap = new Map()
 
     for (const en of enrollments) {
-      if (en.status === 'withdrawn' && statusFilter && statusFilter !== 'withdrawn') continue
+      if (!traineeMap.has(en.traineeId)) {
+        const uDoc = await db.collection('users').doc(en.traineeId).get()
+        const user = uDoc.exists ? uDoc.data() : {}
+        if (user.status === 'disabled') continue
+        traineeMap.set(en.traineeId, { enrollments: [], user })
+      }
+      const entry = traineeMap.get(en.traineeId)
+      if (!entry) continue
+      entry.enrollments.push(en)
+    }
 
-      const uDoc = await db.collection('users').doc(en.traineeId).get()
-      const user = uDoc.exists ? uDoc.data() : {}
-      const name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || en.traineeId
+    const rows = []
+
+    for (const [traineeId, { enrollments: traineeEnrollments, user }] of traineeMap) {
+      const name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || traineeId
       const email = user.email || ''
 
       if (search && !name.toLowerCase().includes(search) && !email.toLowerCase().includes(search)) continue
 
-      const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-      const cp = cpDoc.exists ? cpDoc.data() : null
+      let worstStatus = 'active'
+      let bestProgress = 0
+      let earliestDue = null
+      let latestActive = null
+      let courseCount = 0
 
-      const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
-      const isOverdue = dueDate && dueDate < now && en.status === 'active' && cp?.status !== 'completed'
-      const daysRemaining = dueDate ? Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24)) : null
+      for (const en of traineeEnrollments) {
+        if (en.status === 'withdrawn') continue
+        courseCount++
 
-      let effectiveStatus = en.status
-      if (isOverdue) effectiveStatus = 'overdue'
-      if (cp?.status === 'completed') effectiveStatus = 'completed'
+        const cpDoc = await db.collection('courseProgress').doc(`${traineeId}_${en.courseId}`).get()
+        const cp = cpDoc.exists ? cpDoc.data() : null
+        const progress = cp?.percentComplete || 0
+        if (progress > bestProgress) bestProgress = progress
 
-      if (statusFilter && statusFilter !== 'all') {
-        if (statusFilter === 'overdue' && !isOverdue) continue
-        if (statusFilter === 'active' && (effectiveStatus !== 'active')) continue
-        if (statusFilter === 'completed' && effectiveStatus !== 'completed') continue
-        if (statusFilter === 'withdrawn' && en.status !== 'withdrawn') continue
+        const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
+        const isOverdue = dueDate && dueDate < now && en.status === 'active' && cp?.status !== 'completed'
+
+        let effectiveStatus = en.status
+        if (isOverdue) effectiveStatus = 'overdue'
+        if (cp?.status === 'completed') effectiveStatus = 'completed'
+
+        if (effectiveStatus === 'overdue') worstStatus = 'overdue'
+        else if (effectiveStatus === 'completed' && worstStatus !== 'overdue') {
+          if (worstStatus === 'active') worstStatus = 'completed'
+        }
+
+        if (dueDate && (!earliestDue || dueDate < earliestDue)) earliestDue = dueDate
+        const activeTs = cp?.updatedAt ? (cp.updatedAt.toDate ? cp.updatedAt.toDate() : new Date(cp.updatedAt)) : null
+        if (activeTs && (!latestActive || activeTs > latestActive)) latestActive = activeTs
       }
 
+      // If all enrollments are withdrawn, show as withdrawn
+      if (courseCount === 0) {
+        worstStatus = 'withdrawn'
+        if (statusFilter && statusFilter !== 'all' && statusFilter !== 'withdrawn') continue
+      }
+
+      if (statusFilter && statusFilter !== 'all') {
+        if (statusFilter === 'overdue' && worstStatus !== 'overdue') continue
+        if (statusFilter === 'active' && worstStatus !== 'active') continue
+        if (statusFilter === 'completed' && worstStatus !== 'completed') continue
+        if (statusFilter === 'withdrawn' && worstStatus !== 'withdrawn') continue
+      }
+
+      const daysRemaining = earliestDue ? Math.ceil((earliestDue - now) / (1000 * 60 * 60 * 24)) : null
+
       rows.push({
-        traineeId: en.traineeId,
-        enrollmentId: en.id,
-        courseId: en.courseId,
+        traineeId,
         name,
         email,
-        status: effectiveStatus,
-        currentModuleId: cp?.currentModuleId || null,
-        progress: cp?.percentComplete || 0,
-        dueDate: serializeValue(en.dueDate),
+        status: worstStatus,
+        progress: bestProgress,
+        courseCount,
+        dueDate: earliestDue ? serializeValue(earliestDue) : null,
         daysRemaining,
-        lastActive: serializeValue(cp?.updatedAt),
-        enrolledAt: serializeValue(en.enrolledAt),
+        lastActive: latestActive ? serializeValue(latestActive) : null,
       })
     }
 
@@ -246,65 +285,88 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
     const user = uDoc.exists ? serializeDoc(uDoc) : null
 
     const enSnap = await db.collection('enrollments').where('traineeId', '==', traineeId).get()
-    const enrollments = enSnap.docs.map((d) => serializeDoc(d))
-    const enrollment = enrollments.find((e) => e.status === 'active' || e.status === 'completed') || enrollments[0]
+    const allEnrollments = enSnap.docs.map((d) => serializeDoc(d))
 
-    if (!enrollment) return res.json({ user, enrollment: null, courseProgress: null, modules: [], attempts: [], activity: [] })
+    if (allEnrollments.length === 0) return res.json({ user, courses: [], attempts: [], activity: [], reminders: [] })
 
-    const courseId = enrollment.courseId
-    const cpDoc = await db.collection('courseProgress').doc(`${traineeId}_${courseId}`).get()
+    // Build per-course details for all enrollments
+    const courseSnap = await db.collection('courses').limit(500).get()
+    const courseTitleMap = new Map(courseSnap.docs.map((d) => [d.id, d.data().title || 'Untitled']))
 
-    // Module breakdown
-    const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
-    const modules = modSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .filter((m) => m.status === 'published')
-      .sort((a, b) => (a.order || 0) - (b.order || 0))
+    const now = new Date()
+    const courseDetails = []
 
-    const moduleDetails = []
-    for (const mod of modules) {
-      const mpDoc = await db.collection('moduleProgress').doc(`${traineeId}_${mod.id}`).get()
-      const mp = mpDoc.exists ? mpDoc.data() : null
+    for (const enrollment of allEnrollments) {
+      const courseId = enrollment.courseId
+      const courseTitle = courseTitleMap.get(courseId) || 'Unknown Course'
+      const cpDoc = await db.collection('courseProgress').doc(`${traineeId}_${courseId}`).get()
+      const cp = cpDoc.exists ? cpDoc.data() : null
 
-      // Get exam info for this module
-      const lessonSnap = await db.collection('lessons').where('moduleId', '==', mod.id).get()
-      const examLessons = lessonSnap.docs
+      const dueDate = enrollment.dueDate ? new Date(enrollment.dueDate) : null
+      const isOverdue = dueDate && dueDate < now && enrollment.status === 'active' && cp?.status !== 'completed'
+      let effectiveStatus = enrollment.status
+      if (isOverdue) effectiveStatus = 'overdue'
+      if (cp?.status === 'completed') effectiveStatus = 'completed'
+
+      // Module breakdown for this course
+      const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
+      const modules = modSnap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((l) => l.type === 'exam' && l.status === 'published')
+        .filter((m) => m.status === 'published')
+        .sort((a, b) => (a.order || 0) - (b.order || 0))
 
-      let examScore = null
-      let examAttempts = 0
-      for (const el of examLessons) {
-        if (el.content?.quizId) {
-          const attSnap = await db.collection('quizAttempts')
-            .where('quizId', '==', el.content.quizId)
-            .where('traineeId', '==', traineeId)
-            .get()
-          examAttempts = attSnap.size
-          const scores = attSnap.docs.map((d) => d.data().score).filter((s) => s != null)
-          examScore = scores.length > 0 ? Math.max(...scores) : null
+      const moduleDetails = []
+      for (const mod of modules) {
+        const mpDoc = await db.collection('moduleProgress').doc(`${traineeId}_${mod.id}`).get()
+        const mp = mpDoc.exists ? mpDoc.data() : null
+
+        const lessonSnap = await db.collection('lessons').where('moduleId', '==', mod.id).get()
+        const examLessons = lessonSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((l) => l.type === 'exam' && l.status === 'published')
+
+        let examScore = null
+        let examAttempts = 0
+        for (const el of examLessons) {
+          if (el.content?.quizId) {
+            const attSnap = await db.collection('quizAttempts')
+              .where('quizId', '==', el.content.quizId)
+              .where('traineeId', '==', traineeId)
+              .get()
+            examAttempts = attSnap.size
+            const scores = attSnap.docs.map((d) => d.data().score).filter((s) => s != null)
+            examScore = scores.length > 0 ? Math.max(...scores) : null
+          }
         }
+
+        moduleDetails.push({
+          moduleId: mod.id,
+          title: mod.title,
+          order: mod.order,
+          status: mp?.status || 'locked',
+          percentComplete: mp?.percentComplete || 0,
+          completedLessons: mp?.completedLessons || 0,
+          totalLessons: mp?.totalLessons || 0,
+          examScore,
+          examAttempts,
+        })
       }
 
-      moduleDetails.push({
-        moduleId: mod.id,
-        title: mod.title,
-        order: mod.order,
-        status: mp?.status || 'locked',
-        percentComplete: mp?.percentComplete || 0,
-        completedLessons: mp?.completedLessons || 0,
-        totalLessons: mp?.totalLessons || 0,
-        examScore,
-        examAttempts,
+      courseDetails.push({
+        courseId,
+        courseTitle,
+        enrollment: serializeValue(enrollment),
+        courseProgress: cpDoc.exists ? serializeDoc(cpDoc) : null,
+        status: effectiveStatus,
+        modules: moduleDetails,
       })
     }
 
-    // Assessment history
+    // Assessment history (across all courses)
     const attSnap = await db.collection('quizAttempts').where('traineeId', '==', traineeId).get()
     const attempts = attSnap.docs.map((d) => serializeDoc(d))
       .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
 
-    // Enrich with quiz names
     const quizIds = [...new Set(attempts.map((a) => a.quizId))]
     const quizNameMap = new Map()
     for (const qid of quizIds) {
@@ -347,9 +409,7 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
 
     res.json({
       user,
-      enrollment: serializeValue(enrollment),
-      courseProgress: cpDoc.exists ? serializeDoc(cpDoc) : null,
-      modules: moduleDetails,
+      courses: courseDetails,
       attempts: enrichedAttempts,
       activity: activity.slice(0, 50),
       reminders,

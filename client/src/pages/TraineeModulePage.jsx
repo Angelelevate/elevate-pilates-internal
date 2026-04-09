@@ -84,7 +84,7 @@ export function TraineeModulePage() {
             to={`/courses/${courseId}/modules/${moduleId}/lessons/${continueTo}`}
             className="ui-btn-primary mt-5 inline-flex"
           >
-            Continue learning
+            {data.lessons?.some((l) => l.status !== 'not_started') ? 'Continue learning' : 'Start learning'}
           </Link>
         ) : (
           <p className="mt-4 text-sm text-stone-500">No lessons available in this module.</p>

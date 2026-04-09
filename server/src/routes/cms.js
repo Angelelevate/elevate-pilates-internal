@@ -91,6 +91,20 @@ function fileNameFromLessonStoragePath(storagePath, lessonId) {
   return m ? m[1] : base
 }
 
+async function autoUnpublishCourseIfEmpty(db, courseId) {
+  const courseRef = db.collection('courses').doc(courseId)
+  const courseDoc = await courseRef.get()
+  if (!courseDoc.exists || courseDoc.data().status !== 'published') return
+  const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
+  const hasActive = modSnap.docs.some((d) => {
+    const s = d.data().status
+    return s !== 'archived'
+  })
+  if (!hasActive) {
+    await courseRef.update({ status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+  }
+}
+
 cmsRouter.post('/courses', async (req, res, next) => {
   try {
     const db = dbRequired()
@@ -323,10 +337,15 @@ cmsRouter.post('/courses/:courseId/modules', async (req, res, next) => {
       throw err
     }
     const { title, description, order, completionCriteria } = req.body || {}
-    if (!title || order === undefined || order === null) {
-      const err = new Error('title and order are required')
+    if (!title || !String(title).trim()) {
+      const err = new Error('Module title is required')
       err.status = 400
       throw err
+    }
+    let moduleOrder = order
+    if (moduleOrder === undefined || moduleOrder === null) {
+      const existingModules = await db.collection('modules').where('courseId', '==', courseId).get()
+      moduleOrder = existingModules.size + 1
     }
     const desc =
       description !== undefined && description !== null
@@ -337,7 +356,7 @@ cmsRouter.post('/courses/:courseId/modules', async (req, res, next) => {
       courseId,
       title: String(title).trim(),
       description: desc,
-      order: Number(order),
+      order: Number(moduleOrder),
       completionCriteria: {
         allLessonsCompleted: completionCriteria?.allLessonsCompleted !== false,
         examPassed: Boolean(completionCriteria?.examPassed),
@@ -475,6 +494,11 @@ cmsRouter.patch('/modules/:moduleId/status', async (req, res, next) => {
       throw err
     }
     await ref.update({ status, updatedAt: FieldValue.serverTimestamp() })
+
+    if (status === 'archived' || status === 'draft') {
+      await autoUnpublishCourseIfEmpty(db, doc.data().courseId)
+    }
+
     res.json(serializeDoc(await ref.get()))
   } catch (e) {
     next(e)
@@ -492,6 +516,7 @@ cmsRouter.delete('/modules/:moduleId', async (req, res, next) => {
       throw err
     }
     await ref.update({ status: 'archived', updatedAt: FieldValue.serverTimestamp() })
+    await autoUnpublishCourseIfEmpty(db, doc.data().courseId)
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -675,10 +700,22 @@ cmsRouter.patch('/lessons/:lessonId/status', async (req, res, next) => {
       throw err
     }
     const lesson = doc.data()
-    if (status === 'published' && lesson.type === 'video' && !lesson.content?.storagePath) {
-      const err = new Error('Upload a video before publishing this lesson')
-      err.status = 400
-      throw err
+    if (status === 'published') {
+      if (lesson.type === 'video' && !lesson.content?.storagePath) {
+        const err = new Error('Upload a video before publishing this lesson')
+        err.status = 400
+        throw err
+      }
+      if (lesson.type === 'reading' && (!lesson.content?.body || !String(lesson.content.body).trim())) {
+        const err = new Error('Add reading content before publishing this lesson')
+        err.status = 400
+        throw err
+      }
+      if ((lesson.type === 'quiz' || lesson.type === 'exam') && (!lesson.content?.quizId || !String(lesson.content.quizId).trim())) {
+        const err = new Error(`Link a ${lesson.type} before publishing this lesson`)
+        err.status = 400
+        throw err
+      }
     }
     await ref.update({ status, updatedAt: FieldValue.serverTimestamp() })
     res.json(serializeDoc(await ref.get()))

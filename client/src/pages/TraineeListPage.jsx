@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
@@ -11,16 +11,24 @@ export function TraineeListPage() {
   const [data, setData] = useState({ data: [], total: 0, page: 1, totalPages: 1 })
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState(params.get('search') || '')
+  const [debouncedSearch, setDebouncedSearch] = useState(search)
   const [status, setStatus] = useState(params.get('status') || 'all')
   const [sort, setSort] = useState(params.get('sort') || 'name')
   const [order, setOrder] = useState(params.get('order') || 'asc')
   const [page, setPage] = useState(Number(params.get('page')) || 1)
+  const debounceRef = useRef(null)
+
+  useEffect(() => {
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebouncedSearch(search), 350)
+    return () => clearTimeout(debounceRef.current)
+  }, [search])
 
   async function load() {
     setLoading(true)
     try {
       const { data: d } = await api.get('/api/admin/dashboard/trainees', {
-        params: { page, limit: 25, search, status, sort, order },
+        params: { page, limit: 25, search: debouncedSearch, status, sort, order },
       })
       setData(d)
     } catch {
@@ -30,16 +38,29 @@ export function TraineeListPage() {
 
   useEffect(() => {
     load()
-    setParams({ search, status, sort, order, page: String(page) })
-  }, [search, status, sort, order, page])
+    setParams({ search: debouncedSearch, status, sort, order, page: String(page) })
+  }, [debouncedSearch, status, sort, order, page])
 
   function toggleSort(col) {
     if (sort === col) setOrder((o) => o === 'asc' ? 'desc' : 'asc')
     else { setSort(col); setOrder('asc') }
   }
 
-  function exportCsv() {
-    window.open(`${api.defaults.baseURL}/api/admin/export/trainees?status=${status}&search=${search}`, '_blank')
+  async function exportCsv() {
+    try {
+      const { data: blob } = await api.get('/api/admin/dashboard/export/trainees', {
+        params: { status, search },
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'trainees.csv'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // silent
+    }
   }
 
   return (
@@ -102,8 +123,11 @@ export function TraineeListPage() {
             </thead>
             <tbody className="divide-y divide-stone-100">
               {data.data.map((t) => (
-                <tr key={`${t.traineeId}-${t.enrollmentId}`} className="transition-colors hover:bg-stone-50/50">
-                  <td className="px-4 py-3 font-medium text-stone-900">{t.name}</td>
+                <tr key={t.traineeId} className="transition-colors hover:bg-stone-50/50">
+                  <td className="px-4 py-3 font-medium text-stone-900">
+                    {t.name}
+                    {t.courseCount > 1 && <span className="ml-1.5 rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold text-stone-500">{t.courseCount} courses</span>}
+                  </td>
                   <td className="px-4 py-3 text-stone-600">{t.email}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${

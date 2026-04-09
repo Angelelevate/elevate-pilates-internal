@@ -107,6 +107,11 @@ profileRouter.post('/change-password', async (req, res, next) => {
       err.status = 400
       throw err
     }
+    if (currentPassword === newPassword) {
+      const err = new Error('New password must be different from your current password')
+      err.status = 400
+      throw err
+    }
     const policy = getPublicConfig().passwordPolicy
     const pw = validatePasswordAgainstPolicy(newPassword, policy)
     if (!pw.valid) {

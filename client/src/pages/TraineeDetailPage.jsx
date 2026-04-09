@@ -23,12 +23,13 @@ export function TraineeDetailPage() {
   useEffect(() => { load() }, [traineeId])
 
   async function sendReminder() {
-    if (!data?.enrollment?.id) return
+    const activeEnrollment = data?.courses?.find((c) => c.status === 'active' || c.status === 'overdue')?.enrollment
+    if (!activeEnrollment?.id) return
     if (!confirm('Send a reminder email to this trainee?')) return
     try {
       await api.post('/api/admin/reminders/send', {
         traineeId,
-        enrollmentId: data.enrollment.id,
+        enrollmentId: activeEnrollment.id,
       })
       showToast({ variant: 'success', message: 'Reminder sent.' })
       load()
@@ -37,94 +38,122 @@ export function TraineeDetailPage() {
     }
   }
 
-  function exportAttempts() {
-    window.open(`${api.defaults.baseURL}/api/admin/export/trainees/${traineeId}/attempts`, '_blank')
+  async function exportAttempts() {
+    try {
+      const { data: blob } = await api.get(`/api/admin/dashboard/export/trainees/${traineeId}/attempts`, {
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `trainee-${traineeId}-attempts.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      showToast({ variant: 'error', message: 'Export failed.' })
+    }
   }
 
   if (loading) return <LoadingSpinner label="Loading trainee" />
   if (!data) return <p className="text-sm text-stone-500">Trainee not found.</p>
 
-  const { user, enrollment, courseProgress, modules, attempts, activity, reminders } = data
+  const { user, courses = [], attempts, activity, reminders } = data
   const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email : traineeId
+
+  // Find the first active enrollment for reminder sending
+  const activeEnrollment = courses.find((c) => c.status === 'active' || c.status === 'overdue')?.enrollment
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <button type="button" onClick={() => navigate('/admin/trainees')} className="ui-link text-sm text-stone-500 hover:underline">← Trainees</button>
+          <button type="button" onClick={() => navigate(-1)} className="ui-link text-sm text-stone-500 hover:underline">← Trainees</button>
           <h1 className="mt-1 font-display text-2xl font-semibold text-stone-900">{name}</h1>
           {user?.email && <p className="text-sm text-stone-500">{user.email}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={sendReminder} className="ui-btn-secondary min-h-[44px]">Send Reminder</button>
+          <button type="button" onClick={sendReminder} disabled={!activeEnrollment} className="ui-btn-secondary min-h-[44px] disabled:opacity-40">Send Reminder</button>
           <button type="button" onClick={exportAttempts} className="ui-btn-secondary min-h-[44px]">Export Attempts</button>
         </div>
       </div>
 
-      {/* Profile + enrollment */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="ui-surface p-4">
-          <p className="text-xs font-semibold uppercase text-stone-400">Status</p>
-          <p className="mt-1 text-lg font-semibold text-stone-900 capitalize">{enrollment?.status || '—'}</p>
-        </div>
-        <div className="ui-surface p-4">
-          <p className="text-xs font-semibold uppercase text-stone-400">Overall Progress</p>
-          <p className="mt-1 text-lg font-semibold text-deep">{courseProgress?.percentComplete || 0}%</p>
-          <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
-            <div className="h-full rounded-full bg-deep" style={{ width: `${courseProgress?.percentComplete || 0}%` }} />
+      {/* Per-course sections */}
+      {courses.map((course) => (
+        <div key={course.courseId} className="space-y-4">
+          <div className="ui-surface p-5">
+            <h2 className="font-display text-lg font-semibold text-stone-900">{course.courseTitle}</h2>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs font-semibold uppercase text-stone-400">Status</p>
+                <p className="mt-1 text-lg font-semibold text-stone-900 capitalize">{course.status || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-stone-400">Progress</p>
+                <p className="mt-1 text-lg font-semibold text-deep">{course.courseProgress?.percentComplete || 0}%</p>
+                <div className="mt-1 h-2 overflow-hidden rounded-full bg-stone-100">
+                  <div className="h-full rounded-full bg-deep" style={{ width: `${course.courseProgress?.percentComplete || 0}%` }} />
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-stone-400">Enrolled</p>
+                <p className="mt-1 text-sm text-stone-700">{course.enrollment?.enrolledAt ? new Date(course.enrollment.enrolledAt).toLocaleDateString() : '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase text-stone-400">Due Date</p>
+                <p className="mt-1 text-sm text-stone-700">{course.enrollment?.dueDate ? new Date(course.enrollment.dueDate).toLocaleDateString() : '—'}</p>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="ui-surface p-4">
-          <p className="text-xs font-semibold uppercase text-stone-400">Enrolled</p>
-          <p className="mt-1 text-sm text-stone-700">{enrollment?.enrolledAt ? new Date(enrollment.enrolledAt).toLocaleDateString() : '—'}</p>
-        </div>
-        <div className="ui-surface p-4">
-          <p className="text-xs font-semibold uppercase text-stone-400">Due Date</p>
-          <p className="mt-1 text-sm text-stone-700">{enrollment?.dueDate ? new Date(enrollment.dueDate).toLocaleDateString() : '—'}</p>
-        </div>
-      </div>
 
-      {/* Module breakdown */}
-      <div className="ui-surface overflow-hidden">
-        <h2 className="border-b border-stone-200/60 px-5 py-3 font-display text-lg font-semibold text-stone-900">Module Progress</h2>
-        <table className="w-full text-left text-sm">
-          <thead className="bg-stone-50/50">
-            <tr>
-              <th className="px-4 py-2.5 font-medium text-stone-600">Module</th>
-              <th className="px-4 py-2.5 font-medium text-stone-600">Status</th>
-              <th className="px-4 py-2.5 font-medium text-stone-600">Progress</th>
-              <th className="px-4 py-2.5 font-medium text-stone-600">Lessons</th>
-              <th className="px-4 py-2.5 font-medium text-stone-600">Exam Score</th>
-              <th className="px-4 py-2.5 font-medium text-stone-600">Attempts</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-stone-100">
-            {(modules || []).map((m) => (
-              <tr key={m.moduleId}>
-                <td className="px-4 py-2.5 font-medium text-stone-800">{m.title}</td>
-                <td className="px-4 py-2.5">
-                  <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    m.status === 'completed' ? 'bg-emerald-100 text-emerald-800' :
-                    m.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                    'bg-stone-100 text-stone-500'
-                  }`}>{m.status.replace('_', ' ')}</span>
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 w-16 overflow-hidden rounded-full bg-stone-100">
-                      <div className="h-full rounded-full bg-deep" style={{ width: `${m.percentComplete}%` }} />
-                    </div>
-                    <span className="text-xs text-stone-600">{m.percentComplete}%</span>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-stone-600">{m.completedLessons}/{m.totalLessons}</td>
-                <td className="px-4 py-2.5 text-stone-600">{m.examScore != null ? `${m.examScore}%` : 'N/A'}</td>
-                <td className="px-4 py-2.5 text-stone-600">{m.examAttempts || 'N/A'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          {/* Module breakdown for this course */}
+          {course.modules?.length > 0 && (
+            <div className="ui-surface overflow-hidden">
+              <h3 className="border-b border-stone-200/60 px-5 py-3 font-display text-base font-semibold text-stone-900">Module Progress</h3>
+              <table className="w-full text-left text-sm">
+                <thead className="bg-stone-50/50">
+                  <tr>
+                    <th className="px-4 py-2.5 font-medium text-stone-600">Module</th>
+                    <th className="px-4 py-2.5 font-medium text-stone-600">Status</th>
+                    <th className="px-4 py-2.5 font-medium text-stone-600">Progress</th>
+                    <th className="px-4 py-2.5 font-medium text-stone-600">Lessons</th>
+                    <th className="px-4 py-2.5 font-medium text-stone-600">Exam Score</th>
+                    <th className="px-4 py-2.5 font-medium text-stone-600">Attempts</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {course.modules.map((m) => (
+                    <tr key={m.moduleId}>
+                      <td className="px-4 py-2.5 font-medium text-stone-800">{m.title}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          m.status === 'completed' ? 'bg-emerald-100 text-emerald-800' :
+                          m.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
+                          'bg-stone-100 text-stone-500'
+                        }`}>{m.status.replace('_', ' ')}</span>
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-16 overflow-hidden rounded-full bg-stone-100">
+                            <div className="h-full rounded-full bg-deep" style={{ width: `${m.percentComplete}%` }} />
+                          </div>
+                          <span className="text-xs text-stone-600">{m.percentComplete}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-stone-600">{m.completedLessons}/{m.totalLessons}</td>
+                      <td className="px-4 py-2.5 text-stone-600">{m.examScore != null ? `${m.examScore}%` : 'N/A'}</td>
+                      <td className="px-4 py-2.5 text-stone-600">{m.examAttempts || 'N/A'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {courses.length === 0 && (
+        <div className="ui-surface p-8 text-center text-sm text-stone-500">No course enrollments found.</div>
+      )}
 
       {/* Assessment history */}
       <div className="ui-surface overflow-hidden">

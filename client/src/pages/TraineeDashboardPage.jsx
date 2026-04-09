@@ -44,7 +44,7 @@ function DueDateBanner({ dueDate, courseComplete }) {
 export function TraineeDashboardPage() {
   const [rows, setRows] = useState([])
   const [error, setError] = useState('')
-  const [lockMsg, setLockMsg] = useState('')
+  const [lockMsgs, setLockMsgs] = useState({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -131,9 +131,9 @@ export function TraineeDashboardPage() {
             courseComplete={row.courseProgressPercent >= 100}
           />
 
-          {lockMsg ? (
+          {lockMsgs[row.course?.id] ? (
             <p className="motion-safe:animate-in-up motion-reduce:animate-none rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 shadow-warm-sm">
-              {lockMsg}
+              {lockMsgs[row.course?.id]}
             </p>
           ) : null}
 
@@ -144,7 +144,7 @@ export function TraineeDashboardPage() {
                   key={`${row.course?.id}-${m.id}`}
                   to={`/courses/${row.course?.id}/modules/${m.id}`}
                   className="ui-card block rounded-2xl border border-stone-200/60 bg-white/90 px-5 py-5 shadow-card-elevated hover:border-clay/50"
-                  onClick={() => setLockMsg('')}
+                  onClick={() => setLockMsgs((p) => ({ ...p, [row.course?.id]: '' }))}
                   style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
                 >
                   <ModuleCardBody m={m} />
@@ -154,11 +154,12 @@ export function TraineeDashboardPage() {
                   key={`${row.course.id}-${m.id}`}
                   type="button"
                   onClick={() =>
-                    setLockMsg(
-                      m.prerequisiteTitle
+                    setLockMsgs((p) => ({
+                      ...p,
+                      [row.course?.id]: m.prerequisiteTitle
                         ? `Complete "${m.prerequisiteTitle}" to unlock this module.`
                         : 'This module is locked.',
-                    )
+                    }))
                   }
                   className="ui-press w-full rounded-2xl border border-stone-200/50 bg-stone-50/60 px-5 py-5 text-left opacity-65 shadow-warm-sm transition-[opacity,transform] duration-200 ease-soft hover:opacity-80"
                 >

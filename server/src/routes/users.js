@@ -126,6 +126,12 @@ usersRouter.post('/trainees', async (req, res, next) => {
       err.status = 400
       throw err
     }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+    if (!emailRegex.test(email)) {
+      const err = new Error('Please enter a valid email address')
+      err.status = 400
+      throw err
+    }
 
     const policy = getPublicConfig().passwordPolicy
     let passwordGenerated = false
