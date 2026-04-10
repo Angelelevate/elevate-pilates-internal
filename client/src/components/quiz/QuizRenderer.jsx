@@ -132,8 +132,9 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
   }
 
   async function submitAttempt(attemptId, ans) {
+    const id = attemptId || attempt?.attemptId || attempt?.id
     const formatted = Object.entries(ans || answers).map(([questionId, selectedOptionIds]) => ({ questionId, selectedOptionIds }))
-    const { data } = await api.post(`/api/my/attempts/${attemptId || attempt?.attemptId}/submit`, { answers: formatted })
+    const { data } = await api.post(`/api/my/attempts/${id}/submit`, { answers: formatted })
     return data
   }
 
