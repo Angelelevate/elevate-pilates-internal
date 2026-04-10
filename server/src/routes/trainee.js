@@ -134,10 +134,10 @@ async function assertEnrollment(db, traineeId, courseId) {
     .collection('enrollments')
     .where('traineeId', '==', traineeId)
     .get()
-  const active = snap.docs
+  const enrollment = snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .find((e) => e.courseId === courseId && e.status === 'active')
-  if (!active) {
+    .find((e) => e.courseId === courseId && (e.status === 'active' || e.status === 'completed'))
+  if (!enrollment) {
     const err = new Error('Not enrolled in this course')
     err.status = 403
     throw err
@@ -148,7 +148,7 @@ async function assertEnrollment(db, traineeId, courseId) {
     err.status = 403
     throw err
   }
-  return active
+  return enrollment
 }
 
 function computeModuleUnlock(modules, lessonsByModuleId, progressByLessonId) {
