@@ -76,6 +76,16 @@ export async function deleteStorageFile(storagePath) {
   }
 }
 
+export async function deleteStoragePrefix(prefix) {
+  if (!getFirebaseAdmin() || !prefix) return
+  const bucket = admin.storage().bucket()
+  try {
+    await bucket.deleteFiles({ prefix, force: true })
+  } catch {
+    // best-effort cleanup
+  }
+}
+
 export async function getVideoSignedUrl(storagePath, expiresMs = DEFAULT_TTL_MS) {
   if (!getFirebaseAdmin()) throw new Error('Firebase Admin is not configured')
   const bucket = admin.storage().bucket()

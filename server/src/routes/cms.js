@@ -9,6 +9,7 @@ import {
 } from '../services/cmsValidation.js'
 import {
   deleteStorageFile,
+  deleteStoragePrefix,
   generateVideoWriteSignedUrl,
   getVideoSignedUrl,
   verifyUploadedLessonVideo,
@@ -282,6 +283,73 @@ cmsRouter.delete('/courses/:courseId', async (req, res, next) => {
       throw err
     }
     await setCourseTreeStatus(courseId, 'archived')
+    res.status(204).send()
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ── Permanently delete a course and ALL associated data ─────────────
+async function batchDeleteDocs(db, docs) {
+  const chunkSize = 400
+  for (let i = 0; i < docs.length; i += chunkSize) {
+    const batch = db.batch()
+    docs.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref))
+    await batch.commit()
+  }
+}
+
+cmsRouter.post('/courses/:courseId/destroy', async (req, res, next) => {
+  try {
+    const db = dbRequired()
+    const courseId = req.params.courseId
+    const { confirmText } = req.body || {}
+
+    if (confirmText !== 'I accept the risk') {
+      const err = new Error('You must type "I accept the risk" to permanently delete this course.')
+      err.status = 400
+      throw err
+    }
+
+    const ref = db.collection('courses').doc(courseId)
+    const doc = await ref.get()
+    if (!doc.exists) {
+      const err = new Error('Course not found')
+      err.status = 404
+      throw err
+    }
+
+    const modulesSnap = await db.collection('modules').where('courseId', '==', courseId).get()
+    const lessonsSnap = await db.collection('lessons').where('courseId', '==', courseId).get()
+    const enrollSnap = await db.collection('enrollments').where('courseId', '==', courseId).get()
+    const cpSnap = await db.collection('courseProgress').where('courseId', '==', courseId).get()
+    const mpSnap = await db.collection('moduleProgress').where('courseId', '==', courseId).get()
+    const lpSnap = await db.collection('lessonProgress').where('courseId', '==', courseId).get()
+    const quizSnap = await db.collection('quizzes').where('courseId', '==', courseId).get()
+
+    const quizIds = quizSnap.docs.map((d) => d.id)
+    let questionDocs = []
+    let attemptDocs = []
+    for (const qid of quizIds) {
+      const qSnap = await db.collection('questions').where('quizId', '==', qid).get()
+      const aSnap = await db.collection('quizAttempts').where('quizId', '==', qid).get()
+      questionDocs = questionDocs.concat(qSnap.docs)
+      attemptDocs = attemptDocs.concat(aSnap.docs)
+    }
+
+    await batchDeleteDocs(db, attemptDocs)
+    await batchDeleteDocs(db, questionDocs)
+    await batchDeleteDocs(db, quizSnap.docs)
+    await batchDeleteDocs(db, lpSnap.docs)
+    await batchDeleteDocs(db, mpSnap.docs)
+    await batchDeleteDocs(db, cpSnap.docs)
+    await batchDeleteDocs(db, enrollSnap.docs)
+    await batchDeleteDocs(db, lessonsSnap.docs)
+    await batchDeleteDocs(db, modulesSnap.docs)
+    await ref.delete()
+
+    deleteStoragePrefix(`videos/${courseId}/`).catch(() => {})
+
     res.status(204).send()
   } catch (e) {
     next(e)

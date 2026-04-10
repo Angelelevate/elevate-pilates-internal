@@ -34,6 +34,9 @@ export function AdminCourseDetailPage() {
   const [publishBusy, setPublishBusy] = useState(false)
   const [withdrawingId, setWithdrawingId] = useState(null)
   const [archiveBusy, setArchiveBusy] = useState(false)
+  const [destroyOpen, setDestroyOpen] = useState(false)
+  const [destroyConfirm, setDestroyConfirm] = useState('')
+  const [destroyBusy, setDestroyBusy] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -208,6 +211,25 @@ export function AdminCourseDetailPage() {
     }
   }
 
+  async function destroyCourse() {
+    if (destroyConfirm !== 'I accept the risk') return
+    setDestroyBusy(true)
+    setError('')
+    try {
+      await api.post(`/api/courses/${courseId}/destroy`, {
+        confirmText: destroyConfirm,
+      })
+      showToast({ variant: 'success', message: 'Course permanently deleted.' })
+      navigate('/admin/courses')
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Could not delete course.'
+      setError(msg)
+      showToast({ variant: 'error', message: msg })
+    } finally {
+      setDestroyBusy(false)
+    }
+  }
+
   const activeEnrolledIds = useMemo(
     () =>
       new Set(
@@ -329,6 +351,17 @@ export function AdminCourseDetailPage() {
             className="rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-900 shadow-warm-sm transition-colors hover:bg-red-100 disabled:pointer-events-none disabled:opacity-50"
           >
             {archiveBusy ? 'Archiving…' : 'Archive course'}
+          </button>
+          <button
+            type="button"
+            disabled={archiveBusy || publishBusy || validating || destroyBusy}
+            onClick={() => {
+              setDestroyConfirm('')
+              setDestroyOpen(true)
+            }}
+            className="rounded-full border border-red-300 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-warm-sm transition-colors hover:bg-red-700 disabled:pointer-events-none disabled:opacity-50"
+          >
+            Delete permanently
           </button>
         </div>
       </div>
@@ -660,6 +693,59 @@ export function AdminCourseDetailPage() {
           </form>
         </div>
       </section>
+
+      {destroyOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md rounded-2xl border border-red-200 bg-white p-6 shadow-xl">
+            <h2 className="font-display text-lg font-semibold text-red-900">
+              Permanently delete this course?
+            </h2>
+            <div className="mt-3 space-y-2 text-sm text-stone-700">
+              <p>
+                This action <strong className="text-red-800">cannot be undone</strong>. The
+                following will be permanently removed:
+              </p>
+              <ul className="list-disc space-y-1 pl-5 text-stone-600">
+                <li>The course, all its modules, and all lessons</li>
+                <li>All enrollments tied to this course</li>
+                <li>All trainee progress (course, module, and lesson level)</li>
+                <li>All quizzes, questions, and quiz attempts</li>
+                <li>All uploaded videos</li>
+              </ul>
+            </div>
+            <label className="mt-5 block text-sm font-medium text-stone-700">
+              Type <span className="font-semibold text-red-800">I accept the risk</span> to
+              confirm
+            </label>
+            <input
+              type="text"
+              value={destroyConfirm}
+              onChange={(e) => setDestroyConfirm(e.target.value)}
+              placeholder="I accept the risk"
+              autoFocus
+              className="mt-2 w-full rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-red-500/30 focus:border-red-300 focus:ring-2"
+            />
+            <div className="mt-5 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDestroyOpen(false)}
+                disabled={destroyBusy}
+                className="rounded-full border border-stone-200 px-4 py-2 text-sm font-semibold text-stone-700 transition-colors hover:bg-stone-50 disabled:pointer-events-none disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={destroyConfirm !== 'I accept the risk' || destroyBusy}
+                onClick={destroyCourse}
+                className="rounded-full border border-red-300 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-warm-sm transition-colors hover:bg-red-700 disabled:pointer-events-none disabled:opacity-50"
+              >
+                {destroyBusy ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
