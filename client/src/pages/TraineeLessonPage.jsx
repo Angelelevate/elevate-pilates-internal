@@ -14,6 +14,7 @@ function typeIcon(type) {
 }
 
 export function TraineeLessonPage() {
+  const { showToast } = useToast()
   const { courseId, moduleId, lessonId } = useParams()
   const navigate = useNavigate()
   const [lesson, setLesson] = useState(null)
@@ -21,6 +22,7 @@ export function TraineeLessonPage() {
   const [error, setError] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [lessonNavLocked, setLessonNavLocked] = useState(false)
+  const loadedOnce = useRef(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -30,10 +32,17 @@ export function TraineeLessonPage() {
       ])
       setLesson(l.data)
       setModuleData(m.data)
+      setError('')
+      loadedOnce.current = true
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not load lesson.')
+      const msg = err.response?.data?.error || 'Could not load lesson.'
+      if (loadedOnce.current) {
+        showToast({ variant: 'error', message: msg })
+      } else {
+        setError(msg)
+      }
     }
-  }, [courseId, moduleId, lessonId])
+  }, [courseId, moduleId, lessonId, showToast])
 
   useEffect(() => {
     refresh()

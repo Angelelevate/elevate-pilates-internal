@@ -145,13 +145,42 @@ async function recalcQuizTotals(db, quizId) {
     questionCount: snap.size,
     updatedAt: FieldValue.serverTimestamp(),
   }
+  let quizWentDraft = false
   if (snap.size === 0) {
     const quizDoc = await db.collection('quizzes').doc(quizId).get()
     if (quizDoc.exists && quizDoc.data().status === 'published') {
       update.status = 'draft'
+      quizWentDraft = true
     }
   }
   await db.collection('quizzes').doc(quizId).update(update)
+
+  if (quizWentDraft) {
+    await cascadeDraftFromQuiz(db, quizId)
+  }
+}
+
+async function cascadeDraftFromQuiz(db, quizId) {
+  const lessonSnap = await db.collection('lessons').get()
+  const affectedCourseIds = new Set()
+
+  for (const d of lessonSnap.docs) {
+    const lesson = d.data()
+    if ((lesson.type === 'quiz' || lesson.type === 'exam') &&
+        lesson.content?.quizId === quizId &&
+        lesson.status === 'published') {
+      await d.ref.update({ status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+      if (lesson.courseId) affectedCourseIds.add(lesson.courseId)
+    }
+  }
+
+  for (const courseId of affectedCourseIds) {
+    const courseRef = db.collection('courses').doc(courseId)
+    const courseDoc = await courseRef.get()
+    if (courseDoc.exists && courseDoc.data().status === 'published') {
+      await courseRef.update({ status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+    }
+  }
 }
 
 quizzesRouter.post('/:quizId/questions', async (req, res, next) => {

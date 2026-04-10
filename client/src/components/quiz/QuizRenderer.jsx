@@ -26,6 +26,9 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
   const loadHistory = useCallback(async () => {
     if (!quizId) return
     try {
+      setTimeLeft(null)
+      clearInterval(timerRef.current)
+      autoSubmittedRef.current = false
       const { data } = await api.get(`/api/my/quizzes/${quizId}/attempts`)
       setHistory(data)
       const submitted = data.filter((a) => a.status === 'submitted' || a.status === 'timed_out')
@@ -81,10 +84,13 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
 
   useEffect(() => { loadHistory() }, [loadHistory])
 
-  // Timer
+  // Timer — reset `timeLeft` to null between attempts so this effect re-fires
+  const timerGeneration = useRef(0)
   useEffect(() => {
     if (timeLeft == null || timeLeft <= 0) return
+    const gen = ++timerGeneration.current
     timerRef.current = setInterval(() => {
+      if (gen !== timerGeneration.current) return
       setTimeLeft((t) => {
         if (t <= 1) {
           clearInterval(timerRef.current)
@@ -98,7 +104,7 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
       })
     }, 1000)
     return () => clearInterval(timerRef.current)
-  }, [timeLeft != null])
+  }, [timeLeft])
 
   async function startAttempt() {
     setStarting(true)
@@ -145,6 +151,7 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
     }
     setSubmitting(true)
     clearInterval(timerRef.current)
+    setTimeLeft(null)
     try {
       const data = await submitAttempt(attempt?.attemptId, answers)
       setResults(data)

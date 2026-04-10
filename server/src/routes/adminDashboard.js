@@ -169,19 +169,27 @@ adminDashboardRouter.get('/trainees', async (req, res, next) => {
     const sort = req.query.sort || 'name'
     const order = req.query.order === 'desc' ? -1 : 1
 
-    const enSnap = await db.collection('enrollments').get()
+    // Batch-load all enrollments, users, and courseProgress in parallel
+    const [enSnap, cpSnap, usersSnap] = await Promise.all([
+      db.collection('enrollments').get(),
+      db.collection('courseProgress').get(),
+      db.collection('users').get(),
+    ])
+
     const enrollments = enSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+
+    const userMap = new Map()
+    for (const d of usersSnap.docs) userMap.set(d.id, d.data())
+
+    const cpMap = new Map()
+    for (const d of cpSnap.docs) cpMap.set(d.id, d.data())
 
     const now = new Date()
 
-    // Group enrollments by trainee
-    /** @type {Map<string, { enrollments: Array, user: Record<string, unknown> | null }>} */
     const traineeMap = new Map()
-
     for (const en of enrollments) {
       if (!traineeMap.has(en.traineeId)) {
-        const uDoc = await db.collection('users').doc(en.traineeId).get()
-        const user = uDoc.exists ? uDoc.data() : {}
+        const user = userMap.get(en.traineeId) || {}
         if (user.status === 'disabled') continue
         traineeMap.set(en.traineeId, { enrollments: [], user })
       }
@@ -208,8 +216,7 @@ adminDashboardRouter.get('/trainees', async (req, res, next) => {
         if (en.status === 'withdrawn') continue
         courseCount++
 
-        const cpDoc = await db.collection('courseProgress').doc(`${traineeId}_${en.courseId}`).get()
-        const cp = cpDoc.exists ? cpDoc.data() : null
+        const cp = cpMap.get(`${traineeId}_${en.courseId}`) || null
         const progress = cp?.percentComplete || 0
         if (progress > bestProgress) bestProgress = progress
 
@@ -230,7 +237,6 @@ adminDashboardRouter.get('/trainees', async (req, res, next) => {
         if (activeTs && (!latestActive || activeTs > latestActive)) latestActive = activeTs
       }
 
-      // If all enrollments are withdrawn, show as withdrawn
       if (courseCount === 0) {
         worstStatus = 'withdrawn'
         if (statusFilter && statusFilter !== 'all' && statusFilter !== 'withdrawn') continue
@@ -258,7 +264,6 @@ adminDashboardRouter.get('/trainees', async (req, res, next) => {
       })
     }
 
-    // Sort
     rows.sort((a, b) => {
       let cmp = 0
       if (sort === 'name') cmp = String(a.name).localeCompare(String(b.name))

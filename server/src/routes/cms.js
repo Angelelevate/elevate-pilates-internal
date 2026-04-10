@@ -675,6 +675,16 @@ cmsRouter.patch('/lessons/:lessonId', async (req, res, next) => {
         }
       }
       patch.content = nextContent
+
+      // Auto-revert published lesson to draft when critical content is removed
+      if (data.status === 'published') {
+        if (data.type === 'reading' && (!nextContent.body || !String(nextContent.body).trim())) {
+          patch.status = 'draft'
+        }
+        if ((data.type === 'quiz' || data.type === 'exam') && (!nextContent.quizId || !String(nextContent.quizId).trim())) {
+          patch.status = 'draft'
+        }
+      }
     }
     await ref.update(patch)
     res.json(serializeDoc(await ref.get()))

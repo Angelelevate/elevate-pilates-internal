@@ -136,7 +136,7 @@ async function assertEnrollment(db, traineeId, courseId) {
     .get()
   const enrollment = snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .find((e) => e.courseId === courseId && (e.status === 'active' || e.status === 'completed'))
+    .find((e) => e.courseId === courseId && e.status !== 'withdrawn')
   if (!enrollment) {
     const err = new Error('Not enrolled in this course')
     err.status = 403
