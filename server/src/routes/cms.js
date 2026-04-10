@@ -712,7 +712,7 @@ cmsRouter.patch('/lessons/:lessonId/status', async (req, res, next) => {
         throw err
       }
       if ((lesson.type === 'quiz' || lesson.type === 'exam') && (!lesson.content?.quizId || !String(lesson.content.quizId).trim())) {
-        const err = new Error(`Link a ${lesson.type} before publishing this lesson`)
+        const err = new Error(`Link ${lesson.type === 'exam' ? 'an exam' : 'a quiz'} before publishing this lesson`)
         err.status = 400
         throw err
       }

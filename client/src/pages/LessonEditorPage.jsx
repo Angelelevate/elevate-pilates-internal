@@ -211,6 +211,23 @@ export function LessonEditorPage() {
     setStatusFlash(null)
     setStatusSaving(status)
     try {
+      // Auto-save pending content before changing status
+      if (lesson.type === 'reading') {
+        await api.patch(`/api/lessons/${lessonId}`, {
+          title: title.trim(),
+          content: { body },
+        })
+      } else if (lesson.type === 'quiz' || lesson.type === 'exam') {
+        await api.patch(`/api/lessons/${lessonId}`, {
+          title: title.trim(),
+          content: { quizId },
+        })
+      } else {
+        if (title.trim() !== lesson.title) {
+          await api.patch(`/api/lessons/${lessonId}`, { title: title.trim() })
+        }
+      }
+
       await api.patch(`/api/lessons/${lessonId}/status`, { status })
       await load()
       setStatusFlash(
@@ -489,7 +506,15 @@ export function LessonEditorPage() {
             lessonType={lesson.type}
             courseId={lesson.courseId}
             value={quizId}
-            onChange={setQuizId}
+            onChange={(id) => {
+              setQuizId(id)
+              if (id) {
+                api.patch(`/api/lessons/${lessonId}`, {
+                  title: title.trim() || lesson.title,
+                  content: { quizId: id },
+                }).then(() => load()).catch(() => {})
+              }
+            }}
           />
           <div className="flex flex-wrap items-center gap-3">
             <button

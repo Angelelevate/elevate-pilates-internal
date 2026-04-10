@@ -16,7 +16,7 @@ function lessonContentIssue(lesson) {
   }
   if (type === 'quiz' || type === 'exam') {
     if (!content.quizId || !String(content.quizId).trim()) {
-      return `Lesson "${lesson.title}" needs a quiz/exam ID`
+      return `Lesson "${lesson.title}" needs a linked ${type} — open the lesson editor and select one from the dropdown`
     }
   }
   return null
