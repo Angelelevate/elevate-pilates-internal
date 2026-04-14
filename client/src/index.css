@@ -108,6 +108,113 @@
   }
 }
 
+/* ─── TipTap Rich Text Editor ─── */
+.rte-content .tiptap {
+  @apply min-h-[320px] px-5 py-4 text-sm text-stone-800 outline-none;
+}
+
+.rte-content .tiptap p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-stone-400;
+  content: attr(data-placeholder);
+}
+
+.rte-content .tiptap > * + * {
+  margin-top: 0.65em;
+}
+
+.rte-content .tiptap h1 { @apply font-display text-2xl font-semibold text-stone-900; }
+.rte-content .tiptap h2 { @apply font-display text-xl font-semibold text-stone-900; }
+.rte-content .tiptap h3 { @apply font-display text-lg font-semibold text-stone-800; }
+.rte-content .tiptap h4 { @apply font-display text-base font-semibold text-stone-800; }
+
+.rte-content .tiptap a {
+  @apply text-deep underline underline-offset-2;
+}
+
+.rte-content .tiptap blockquote {
+  @apply border-l-4 border-stone-300 pl-4 italic text-stone-600;
+}
+
+.rte-content .tiptap ul { @apply ml-5 list-disc; }
+.rte-content .tiptap ol { @apply ml-5 list-decimal; }
+.rte-content .tiptap li { @apply mt-1; }
+
+.rte-content .tiptap pre {
+  @apply rounded-xl bg-stone-900 px-4 py-3 font-mono text-xs text-stone-100;
+}
+.rte-content .tiptap pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+.rte-content .tiptap code {
+  @apply rounded bg-stone-100 px-1.5 py-0.5 font-mono text-xs text-stone-800;
+}
+
+.rte-content .tiptap hr {
+  @apply my-4 border-stone-200;
+}
+
+.rte-content .tiptap img {
+  @apply inline-block max-w-full rounded-xl;
+}
+.rte-content .tiptap img.ProseMirror-selectednode {
+  @apply ring-2 ring-deep/40;
+}
+
+.rte-content .tiptap mark {
+  @apply rounded px-0.5;
+}
+
+/* Table styles */
+.rte-content .tiptap table {
+  @apply w-full border-collapse overflow-hidden rounded-lg;
+}
+.rte-content .tiptap table td,
+.rte-content .tiptap table th {
+  @apply border border-stone-200 px-3 py-2 text-left text-sm;
+  min-width: 80px;
+}
+.rte-content .tiptap table th {
+  @apply bg-stone-50 font-semibold text-stone-700;
+}
+.rte-content .tiptap table .selectedCell {
+  @apply bg-deep/5;
+}
+.rte-content .tiptap table td > *,
+.rte-content .tiptap table th > * {
+  margin-bottom: 0;
+}
+
+/* YouTube embed */
+.rte-content .tiptap div[data-youtube-video] {
+  @apply my-3;
+}
+.rte-content .tiptap div[data-youtube-video] iframe {
+  @apply w-full max-w-2xl rounded-xl;
+  aspect-ratio: 16/9;
+}
+
+/* Prose styles for rendered reading content (preview + trainee) */
+.prose table {
+  @apply w-full border-collapse;
+}
+.prose table td,
+.prose table th {
+  @apply border border-stone-200 px-3 py-2 text-left text-sm;
+}
+.prose table th {
+  @apply bg-stone-50 font-semibold;
+}
+.prose img {
+  @apply inline-block max-w-full rounded-xl;
+}
+.prose mark {
+  @apply rounded px-0.5;
+}
+.prose iframe {
+  @apply w-full max-w-2xl rounded-xl;
+  aspect-ratio: 16/9;
+}
+
 @layer utilities {
   @keyframes completion-toast {
     0% {

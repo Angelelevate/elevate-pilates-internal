@@ -1,12 +1,11 @@
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import ReactQuill from 'react-quill'
-import 'react-quill/dist/quill.snow.css'
 import { api } from '../services/api.js'
 import { putFileToSignedUrl } from '../services/directStorageUpload.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { TraineeVisibilityTip } from '../components/admin/TraineeVisibilityTip.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
+import { RichTextEditor } from '../components/admin/RichTextEditor.jsx'
 
 export function LessonEditorPage() {
   const { showToast } = useToast()
@@ -30,17 +29,30 @@ export function LessonEditorPage() {
   const [archiveBusy, setArchiveBusy] = useState(false)
   const videoInputRef = useRef(null)
 
-  const modules = useMemo(
-    () => ({
-      toolbar: [
-        [{ header: [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline'],
-        [{ list: 'ordered' }, { list: 'bullet' }],
-        ['blockquote', 'link'],
-        ['clean'],
-      ],
-    }),
-    [],
+  const handleImageUpload = useCallback(
+    async (file) => {
+      try {
+        const { data: session } = await api.post(
+          `/api/lessons/${lessonId}/image-upload-session`,
+          {
+            fileName: file.name,
+            contentType: file.type || 'image/png',
+            fileSize: file.size,
+          },
+        )
+        await putFileToSignedUrl(session.uploadUrl, file, session.contentType, () => {})
+        const { data: result } = await api.post(
+          `/api/lessons/${lessonId}/image-upload-complete`,
+          { storagePath: session.storagePath },
+        )
+        return result.imageUrl
+      } catch (err) {
+        const msg = err.response?.data?.error || err.message || 'Image upload failed.'
+        showToast({ variant: 'error', message: msg })
+        throw err
+      }
+    },
+    [lessonId, showToast],
   )
 
   const load = useCallback(async () => {
@@ -355,7 +367,13 @@ export function LessonEditorPage() {
 
       {lesson.type === 'reading' ? (
         <div className="space-y-3">
-          <ReadingQuillFallback key={lessonId} body={body} onChange={setBody} modules={modules} />
+          <RichTextEditor
+            key={lessonId}
+            content={body}
+            onChange={setBody}
+            onImageUpload={handleImageUpload}
+            placeholder="Start writing your reading content…"
+          />
           <button
             type="button"
             disabled={saveReadingBusy}
@@ -597,43 +615,3 @@ function QuizSelector({ lessonType, courseId, value, onChange }) {
   )
 }
 
-class ReadingQuillErrorBoundary extends Component {
-  constructor(props) {
-    super(props)
-    this.state = { hasError: false }
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true }
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950">
-          <p>
-            The rich text editor could not load this content (often due to unusual HTML). Edit the
-            HTML below and save — or simplify the content in a plain editor and paste back.
-          </p>
-          <textarea
-            rows={14}
-            value={this.props.body}
-            onChange={(e) => this.props.onChange(e.target.value)}
-            className="ui-input w-full rounded-xl border border-stone-200 bg-white px-3 py-2 font-mono text-xs outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
-          />
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-function ReadingQuillFallback({ body, onChange, modules }) {
-  return (
-    <ReadingQuillErrorBoundary body={body} onChange={onChange}>
-      <div className="lesson-editor-quill rounded-2xl border border-stone-200/60 bg-white p-2 shadow-warm-sm">
-        <ReactQuill theme="snow" value={body} onChange={onChange} modules={modules} />
-      </div>
-    </ReadingQuillErrorBoundary>
-  )
-}

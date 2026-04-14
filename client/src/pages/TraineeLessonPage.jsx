@@ -233,7 +233,10 @@ function ReadingPane({ lessonId, body, onDone, alreadyComplete, onNavLockChange 
   const { showToast } = useToast()
   const [marking, setMarking] = useState(false)
   const [markedThisSession, setMarkedThisSession] = useState(false)
-  const html = DOMPurify.sanitize(body || '')
+  const html = DOMPurify.sanitize(body || '', {
+    ADD_TAGS: ['iframe'],
+    ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'scrolling', 'style'],
+  })
   const words = (body || '').trim().split(/\s+/).filter(Boolean).length
   const minutes = Math.max(1, Math.round(words / 200))
   const showCompleted = Boolean(alreadyComplete || markedThisSession)

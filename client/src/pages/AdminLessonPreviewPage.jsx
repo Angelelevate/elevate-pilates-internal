@@ -37,7 +37,10 @@ export function AdminLessonPreviewPage() {
   }
   if (!lesson) return <LoadingSpinner label="Loading preview" />
 
-  const html = DOMPurify.sanitize(lesson.content?.body || '')
+  const html = DOMPurify.sanitize(lesson.content?.body || '', {
+    ADD_TAGS: ['iframe'],
+    ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'scrolling', 'style'],
+  })
 
   return (
     <div className="space-y-6">

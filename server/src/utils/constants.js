@@ -11,6 +11,16 @@ export const ALLOWED_VIDEO_MIME_TYPES = [
   'video/webm',
 ]
 
+export const DEFAULT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+export const ALLOWED_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+]
+
 export const DEFAULT_PASSWORD_POLICY = {
   minLength: 8,
   requireUppercase: true,

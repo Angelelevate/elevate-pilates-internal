@@ -11,12 +11,17 @@ import {
   deleteStorageFile,
   deleteStoragePrefix,
   generateVideoWriteSignedUrl,
+  generateImageWriteSignedUrl,
   getVideoSignedUrl,
+  getImageSignedUrl,
   verifyUploadedLessonVideo,
+  verifyUploadedImage,
 } from '../services/storage.js'
 import {
   ALLOWED_VIDEO_MIME_TYPES,
+  ALLOWED_IMAGE_MIME_TYPES,
   DEFAULT_MAX_VIDEO_BYTES,
+  DEFAULT_MAX_IMAGE_BYTES,
 } from '../utils/constants.js'
 import { getDb } from '../utils/firestoreDb.js'
 import { sanitizeReadingHtml } from '../utils/sanitizeReadingHtml.js'
@@ -65,10 +70,12 @@ function assertDueDateNotInPast(isoOrTimestamp) {
   }
 }
 
+function safeBasename(fileName, fallback = 'file') {
+  return path.basename(String(fileName || fallback)).replace(/[^a-zA-Z0-9._-]/g, '_') || fallback
+}
+
 function safeVideoBasename(fileName) {
-  const base =
-    path.basename(String(fileName || 'video')).replace(/[^a-zA-Z0-9._-]/g, '_') || 'video'
-  return base
+  return safeBasename(fileName, 'video')
 }
 
 function buildLessonVideoStoragePath(courseId, moduleId, lessonId, safeName) {
@@ -979,6 +986,96 @@ cmsRouter.delete('/lessons/:lessonId/video', async (req, res, next) => {
     }
     await ref.update({ content, updatedAt: FieldValue.serverTimestamp() })
     res.json(serializeDoc(await ref.get()))
+  } catch (e) {
+    next(e)
+  }
+})
+
+// ── Reading-content image uploads (signed URL flow like video) ──────
+cmsRouter.post('/lessons/:lessonId/image-upload-session', async (req, res, next) => {
+  try {
+    const db = dbRequired()
+    const { fileName, contentType, fileSize } = req.body || {}
+    const maxBytes = DEFAULT_MAX_IMAGE_BYTES
+
+    if (fileSize == null || Number.isNaN(Number(fileSize))) {
+      const err = new Error('fileSize is required')
+      err.status = 400
+      throw err
+    }
+    const size = Number(fileSize)
+    if (size < 1) {
+      const err = new Error('Invalid file size')
+      err.status = 400
+      throw err
+    }
+    if (size > maxBytes) {
+      const err = new Error(`Image is too large. Maximum size is ${Math.round(maxBytes / (1024 * 1024))} MB.`)
+      err.status = 400
+      throw err
+    }
+
+    const mime = String(contentType || '').trim().toLowerCase()
+    if (!ALLOWED_IMAGE_MIME_TYPES.includes(mime)) {
+      const err = new Error('Unsupported image type')
+      err.status = 400
+      throw err
+    }
+
+    const ref = db.collection('lessons').doc(req.params.lessonId)
+    const doc = await ref.get()
+    if (!doc.exists) {
+      const err = new Error('Lesson not found')
+      err.status = 404
+      throw err
+    }
+    const data = doc.data()
+    const safeName = safeBasename(fileName, 'image')
+    const destPath = `reading-images/${data.courseId}/${req.params.lessonId}/${Date.now()}-${safeName}`
+
+    const { url, contentType: ct, expiresInSeconds } = await generateImageWriteSignedUrl(destPath, mime)
+
+    res.json({
+      uploadUrl: url,
+      storagePath: destPath,
+      contentType: ct,
+      maxBytes,
+      expiresInSeconds,
+    })
+  } catch (e) {
+    next(e)
+  }
+})
+
+cmsRouter.post('/lessons/:lessonId/image-upload-complete', async (req, res, next) => {
+  try {
+    const db = dbRequired()
+    const { storagePath } = req.body || {}
+    if (!storagePath || typeof storagePath !== 'string') {
+      const err = new Error('storagePath is required')
+      err.status = 400
+      throw err
+    }
+
+    const ref = db.collection('lessons').doc(req.params.lessonId)
+    const doc = await ref.get()
+    if (!doc.exists) {
+      const err = new Error('Lesson not found')
+      err.status = 404
+      throw err
+    }
+    const data = doc.data()
+    const prefix = `reading-images/${data.courseId}/${req.params.lessonId}/`
+    if (!storagePath.startsWith(prefix)) {
+      const err = new Error('Invalid storage path for this lesson')
+      err.status = 400
+      throw err
+    }
+
+    await verifyUploadedImage(storagePath, DEFAULT_MAX_IMAGE_BYTES)
+    const imageUrl = await getImageSignedUrl(storagePath)
+
+    res.json({ imageUrl, storagePath })
   } catch (e) {
     next(e)
   }
