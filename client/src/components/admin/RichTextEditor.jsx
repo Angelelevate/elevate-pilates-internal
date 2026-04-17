@@ -32,7 +32,16 @@ export function RichTextEditor({ content, onChange, onImageUpload, placeholder }
         openOnClick: false,
         HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
       }),
-      Image.configure({ allowBase64: false, inline: false }),
+      Image.configure({
+        allowBase64: false,
+        inline: false,
+        resize: {
+          enabled: true,
+          minWidth: 48,
+          minHeight: 48,
+          alwaysPreserveAspectRatio: true,
+        },
+      }),
       Table.configure({ resizable: false }),
       TableRow,
       TableHeader,

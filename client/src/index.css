@@ -154,10 +154,68 @@
 }
 
 .rte-content .tiptap img {
-  @apply inline-block max-w-full rounded-xl;
+  @apply inline-block h-auto max-w-full rounded-xl;
+}
+/* Resizable image node view: selection ring is on the container, not the img */
+.rte-content .tiptap [data-resize-container][data-node="image"].ProseMirror-selectednode {
+  @apply rounded-xl ring-2 ring-deep/40;
 }
 .rte-content .tiptap img.ProseMirror-selectednode {
   @apply ring-2 ring-deep/40;
+}
+
+/*
+  TipTap ResizableNodeView creates [data-resize-handle] divs with no intrinsic size;
+  without these rules handles are 0×0 and invisible.
+*/
+.rte-content .tiptap [data-resize-wrapper] {
+  overflow: visible;
+}
+
+.rte-content .tiptap [data-resize-handle] {
+  z-index: 5;
+  box-sizing: border-box;
+  @apply border-2 border-stone-500 bg-white shadow-sm;
+  border-radius: 3px;
+}
+
+.rte-content .tiptap [data-resize-handle="top-left"],
+.rte-content .tiptap [data-resize-handle="top-right"],
+.rte-content .tiptap [data-resize-handle="bottom-left"],
+.rte-content .tiptap [data-resize-handle="bottom-right"] {
+  width: 11px;
+  height: 11px;
+}
+
+.rte-content .tiptap [data-resize-handle="top"],
+.rte-content .tiptap [data-resize-handle="bottom"] {
+  height: 8px;
+}
+
+.rte-content .tiptap [data-resize-handle="left"],
+.rte-content .tiptap [data-resize-handle="right"] {
+  width: 8px;
+}
+
+.rte-content .tiptap [data-resize-handle="top-left"] {
+  cursor: nwse-resize;
+}
+.rte-content .tiptap [data-resize-handle="top-right"] {
+  cursor: nesw-resize;
+}
+.rte-content .tiptap [data-resize-handle="bottom-left"] {
+  cursor: nesw-resize;
+}
+.rte-content .tiptap [data-resize-handle="bottom-right"] {
+  cursor: nwse-resize;
+}
+.rte-content .tiptap [data-resize-handle="top"],
+.rte-content .tiptap [data-resize-handle="bottom"] {
+  cursor: ns-resize;
+}
+.rte-content .tiptap [data-resize-handle="left"],
+.rte-content .tiptap [data-resize-handle="right"] {
+  cursor: ew-resize;
 }
 
 .rte-content .tiptap mark {
@@ -205,7 +263,7 @@
   @apply bg-stone-50 font-semibold;
 }
 .prose img {
-  @apply inline-block max-w-full rounded-xl;
+  @apply inline-block h-auto max-w-full rounded-xl;
 }
 .prose mark {
   @apply rounded px-0.5;
