@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { api } from '../services/api.js'
 
-const sections = [
+const BASE_TOC_SECTIONS = [
   { id: 'overview', label: 'Platform Overview' },
   { id: 'users', label: 'Managing Users' },
   { id: 'courses', label: 'Creating a Course' },
@@ -12,7 +13,40 @@ const sections = [
   { id: 'progress', label: 'Tracking Progress' },
   { id: 'reports', label: 'Reports & Exports' },
   { id: 'reminders', label: 'Reminder Automation' },
-  { id: 'faq', label: 'FAQ & Troubleshooting' },
+]
+
+const FAQ_SECTION = { id: 'faq', label: 'FAQ & Troubleshooting' }
+
+/** Shipped with the app; admins can add more from the customize page. */
+const BUILTIN_FAQ_ENTRIES = [
+  {
+    q: 'A trainee says their module is locked. What do I check?',
+    a: 'Modules unlock sequentially. The trainee must complete all lessons and pass the exam (if required) in the previous module. Check their progress on the trainee detail page to see what\'s blocking them.',
+  },
+  {
+    q: 'A trainee used all 3 exam attempts and failed. What now?',
+    a: 'Go to the trainee detail page and click the exam\'s reset button, or use the admin API to reset their attempts. This lets them try again from scratch.',
+  },
+  {
+    q: 'I updated a lesson but trainees see the old version.',
+    a: 'Changes to published content are reflected immediately. If it\'s a video, the signed URL may be cached — ask the trainee to refresh or wait a few minutes.',
+  },
+  {
+    q: 'Can I change a lesson type after creating it?',
+    a: 'No. Lesson type is set at creation. To change it, archive the lesson and create a new one of the desired type in its place.',
+  },
+  {
+    q: 'How do I remove a trainee from a course?',
+    a: 'Go to the course enrollment list and change their enrollment status to "Withdrawn". They will no longer see the course on their dashboard.',
+  },
+  {
+    q: 'Can trainees see their own scores?',
+    a: 'Yes. After submitting a quiz or exam, trainees see their score, per-question breakdown with correct answers, and explanations. For exams, they also see pass/fail status and remaining attempts.',
+  },
+  {
+    q: 'What happens when a trainee completes the entire course?',
+    a: 'Their enrollment status changes to "Completed" automatically. They see a completion celebration on their dashboard. You\'ll see them in the "Completed" filter on the trainee performance page.',
+  },
 ]
 
 function SectionIcon() {
@@ -49,6 +83,38 @@ function NavTo({ to, children }) {
 
 export function AdminGuidePage() {
   const [active, setActive] = useState('overview')
+  const [extraFaq, setExtraFaq] = useState([])
+  const [customSections, setCustomSections] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { data } = await api.get('/api/admin/platform-guide')
+        if (!cancelled) {
+          setExtraFaq(data.faq || [])
+          setCustomSections(data.customSections || [])
+        }
+      } catch {
+        if (!cancelled) {
+          setExtraFaq([])
+          setCustomSections([])
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const tocSections = useMemo(
+    () => [
+      ...BASE_TOC_SECTIONS,
+      ...customSections.map((s) => ({ id: `custom-${s.id}`, label: s.title })),
+      FAQ_SECTION,
+    ],
+    [customSections],
+  )
 
   function scrollTo(id) {
     setActive(id)
@@ -62,7 +128,7 @@ export function AdminGuidePage() {
         <div className="ui-surface p-3">
           <p className="ui-section-label px-2 pb-2">Guide Contents</p>
           <nav className="space-y-0.5">
-            {sections.map((s) => (
+            {tocSections.map((s) => (
               <button
                 key={s.id}
                 type="button"
@@ -83,12 +149,21 @@ export function AdminGuidePage() {
 
       {/* Content */}
       <div className="min-w-0 flex-1 space-y-10">
-        <div>
-          <p className="ui-section-label">Admin</p>
-          <h1 className="mt-1 font-display text-2xl font-semibold text-stone-900">Platform Guide</h1>
-          <p className="mt-2 text-sm leading-relaxed text-stone-600">
-            Everything you need to know about managing courses, content, assessments, and trainees on the Elevate Pilates training platform.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="ui-section-label">Admin</p>
+            <h1 className="mt-1 font-display text-2xl font-semibold text-stone-900">Platform Guide</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-stone-600">
+              Everything you need to know about managing courses, content, assessments, and trainees on
+              the Elevate Pilates training platform.
+            </p>
+          </div>
+          <Link
+            to="/admin/guide/customize"
+            className="ui-btn-secondary shrink-0 text-sm"
+          >
+            Customize FAQ & sections
+          </Link>
         </div>
 
         {/* ── Platform Overview ─────────────────────────── */}
@@ -317,41 +392,26 @@ export function AdminGuidePage() {
           <Tip>Manual reminders bypass the cooldown period but still count toward the max reminders limit.</Tip>
         </section>
 
+        {customSections.map((s) => (
+          <section
+            key={s.id}
+            id={`custom-${s.id}`}
+            className="ui-surface space-y-5 p-6 scroll-mt-4"
+          >
+            <h2 className="font-display text-xl font-semibold text-stone-900">{s.title}</h2>
+            <div
+              className="prose prose-stone max-w-none text-sm leading-relaxed text-stone-800 prose-headings:font-display prose-a:text-deep"
+              dangerouslySetInnerHTML={{ __html: s.bodyHtml || '' }}
+            />
+          </section>
+        ))}
+
         {/* ── FAQ ───────────────────────────────────────── */}
         <section id="faq" className="ui-surface space-y-5 p-6 scroll-mt-4">
           <h2 className="font-display text-xl font-semibold text-stone-900">FAQ & Troubleshooting</h2>
           <div className="space-y-4">
-            {[
-              {
-                q: 'A trainee says their module is locked. What do I check?',
-                a: 'Modules unlock sequentially. The trainee must complete all lessons and pass the exam (if required) in the previous module. Check their progress on the trainee detail page to see what\'s blocking them.',
-              },
-              {
-                q: 'A trainee used all 3 exam attempts and failed. What now?',
-                a: 'Go to the trainee detail page and click the exam\'s reset button, or use the admin API to reset their attempts. This lets them try again from scratch.',
-              },
-              {
-                q: 'I updated a lesson but trainees see the old version.',
-                a: 'Changes to published content are reflected immediately. If it\'s a video, the signed URL may be cached — ask the trainee to refresh or wait a few minutes.',
-              },
-              {
-                q: 'Can I change a lesson type after creating it?',
-                a: 'No. Lesson type is set at creation. To change it, archive the lesson and create a new one of the desired type in its place.',
-              },
-              {
-                q: 'How do I remove a trainee from a course?',
-                a: 'Go to the course enrollment list and change their enrollment status to "Withdrawn". They will no longer see the course on their dashboard.',
-              },
-              {
-                q: 'Can trainees see their own scores?',
-                a: 'Yes. After submitting a quiz or exam, trainees see their score, per-question breakdown with correct answers, and explanations. For exams, they also see pass/fail status and remaining attempts.',
-              },
-              {
-                q: 'What happens when a trainee completes the entire course?',
-                a: 'Their enrollment status changes to "Completed" automatically. They see a completion celebration on their dashboard. You\'ll see them in the "Completed" filter on the trainee performance page.',
-              },
-            ].map((item, i) => (
-              <details key={i} className="group rounded-xl border border-stone-200/60">
+            {BUILTIN_FAQ_ENTRIES.map((item, i) => (
+              <details key={`builtin-${i}`} className="group rounded-xl border border-stone-200/60">
                 <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium text-stone-800 transition-colors hover:bg-stone-50/50">
                   <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400 transition-transform group-open:rotate-90">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -361,6 +421,26 @@ export function AdminGuidePage() {
                 <p className="px-4 pb-3 pl-10 text-sm leading-relaxed text-stone-600">{item.a}</p>
               </details>
             ))}
+            {extraFaq.length > 0 ? (
+              <>
+                <p className="px-1 pt-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+                  Additional
+                </p>
+                {extraFaq.map((item) => (
+                  <details key={item.id} className="group rounded-xl border border-stone-200/60">
+                    <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium text-stone-800 transition-colors hover:bg-stone-50/50">
+                      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400 transition-transform group-open:rotate-90">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                      {item.question}
+                    </summary>
+                    <p className="px-4 pb-3 pl-10 whitespace-pre-wrap text-sm leading-relaxed text-stone-600">
+                      {item.answer}
+                    </p>
+                  </details>
+                ))}
+              </>
+            ) : null}
           </div>
         </section>
 

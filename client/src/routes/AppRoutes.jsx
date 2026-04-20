@@ -25,6 +25,7 @@ import { TraineeDetailPage } from '../pages/TraineeDetailPage.jsx'
 import { OverdueReportPage, AssessmentReportPage, CourseCompletionReportPage } from '../pages/ReportsPage.jsx'
 import { ReminderSettingsPage, ReminderLogPage, PendingRemindersPage } from '../pages/ReminderPages.jsx'
 import { AdminGuidePage } from '../pages/AdminGuidePage.jsx'
+import { AdminGuideCustomizePage } from '../pages/AdminGuideCustomizePage.jsx'
 
 export function AppRoutes() {
   return (
@@ -221,6 +222,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute roles={['admin']}>
               <AdminGuidePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="admin/guide/customize"
+          element={
+            <ProtectedRoute roles={['admin']}>
+              <AdminGuideCustomizePage />
             </ProtectedRoute>
           }
         />

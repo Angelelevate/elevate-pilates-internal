@@ -13,6 +13,7 @@ import { traineeQuizRouter } from './traineeQuiz.js'
 import { traineeProgressRouter, adminProgressRouter } from './progress.js'
 import { adminDashboardRouter } from './adminDashboard.js'
 import { remindersRouter } from './reminders.js'
+import { platformGuideRouter } from './platformGuide.js'
 
 export const apiRouter = Router()
 
@@ -32,5 +33,6 @@ apiRouter.use('/admin/progress', adminProgressRouter)
 apiRouter.use('/admin/dashboard', adminDashboardRouter)
 apiRouter.use('/admin/reminders', remindersRouter)
 apiRouter.use('/internal/reminders', remindersRouter)
+apiRouter.use('/admin/platform-guide', platformGuideRouter)
 apiRouter.use('/', cmsRouter)
 apiRouter.use('/admin', adminPreviewRouter)
