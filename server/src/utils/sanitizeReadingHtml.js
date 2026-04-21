@@ -30,7 +30,7 @@ const allowedAttributes = {
   ...sanitizeHtml.defaults.allowedAttributes,
   '*': ['style', 'class'],
   a: ['href', 'name', 'target', 'rel'],
-  img: ['src', 'alt', 'title', 'width', 'height'],
+  img: ['src', 'alt', 'title', 'width', 'height', 'class', 'data-align', 'style'],
   iframe: ['src', 'width', 'height', 'allowfullscreen', 'frameborder', 'allow'],
   th: ['colspan', 'rowspan', 'style'],
   td: ['colspan', 'rowspan', 'style'],

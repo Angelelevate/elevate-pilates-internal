@@ -156,6 +156,32 @@
 .rte-content .tiptap img {
   @apply inline-block h-auto max-w-full rounded-xl;
 }
+
+/* ── Image alignment (Word-like text wrap) — editor view ──
+   Resizable image is rendered inside [data-resize-container]; we float that
+   wrapper (using :has) so text in surrounding paragraphs flows around it. */
+.rte-content .tiptap [data-resize-container]:has(img.img-align-left) {
+  float: left;
+  margin: 0.25rem 1.25rem 0.5rem 0;
+  clear: left;
+  max-width: 60%;
+}
+.rte-content .tiptap [data-resize-container]:has(img.img-align-right) {
+  float: right;
+  margin: 0.25rem 0 0.5rem 1.25rem;
+  clear: right;
+  max-width: 60%;
+}
+.rte-content .tiptap [data-resize-container]:has(img.img-align-center) {
+  display: block;
+  float: none;
+  margin: 1rem auto;
+  text-align: center;
+}
+/* Make sure the editor's content area contains the floats */
+.rte-content .tiptap {
+  display: flow-root;
+}
 /* Resizable image node view: selection ring is on the container, not the img */
 .rte-content .tiptap [data-resize-container][data-node="image"].ProseMirror-selectednode {
   @apply rounded-xl ring-2 ring-deep/40;
@@ -271,6 +297,41 @@
 .prose iframe {
   @apply w-full max-w-2xl rounded-xl;
   aspect-ratio: 16/9;
+}
+
+/* ── Image alignment (Word-like text wrap) — rendered prose ── */
+.prose {
+  display: flow-root;
+}
+.prose img.img-align-left {
+  float: left;
+  margin: 0.25rem 1.25rem 0.5rem 0;
+  clear: left;
+  max-width: 60%;
+}
+.prose img.img-align-right {
+  float: right;
+  margin: 0.25rem 0 0.5rem 1.25rem;
+  clear: right;
+  max-width: 60%;
+}
+.prose img.img-align-center {
+  display: block;
+  float: none;
+  margin: 1rem auto;
+}
+
+/* On narrow viewports, floats hurt readability — stack the image instead. */
+@media (max-width: 640px) {
+  .prose img.img-align-left,
+  .prose img.img-align-right,
+  .rte-content .tiptap [data-resize-container]:has(img.img-align-left),
+  .rte-content .tiptap [data-resize-container]:has(img.img-align-right) {
+    float: none;
+    display: block;
+    max-width: 100%;
+    margin: 1rem auto;
+  }
 }
 
 @layer utilities {

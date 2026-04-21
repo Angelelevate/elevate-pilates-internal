@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { useEditor, EditorContent } from '@tiptap/react'
+import { BubbleMenu } from '@tiptap/react/menus'
 import StarterKit from '@tiptap/starter-kit'
 import Image from '@tiptap/extension-image'
 import Link from '@tiptap/extension-link'
@@ -17,6 +18,33 @@ import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
 import Youtube from '@tiptap/extension-youtube'
 
+const ALIGN_VALUES = new Set(['left', 'right', 'center'])
+
+const AlignableImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      align: {
+        default: null,
+        parseHTML: (el) => {
+          const v = el.getAttribute('data-align')
+          if (v && ALIGN_VALUES.has(v)) return v
+          const cls = el.getAttribute('class') || ''
+          const match = cls.match(/img-align-(left|right|center)/)
+          return match ? match[1] : null
+        },
+        renderHTML: (attrs) => {
+          if (!attrs.align || !ALIGN_VALUES.has(attrs.align)) return {}
+          return {
+            'data-align': attrs.align,
+            class: `img-align-${attrs.align}`,
+          }
+        },
+      },
+    }
+  },
+})
+
 export function RichTextEditor({ content, onChange, onImageUpload, placeholder }) {
   const editor = useEditor({
     extensions: [
@@ -32,7 +60,7 @@ export function RichTextEditor({ content, onChange, onImageUpload, placeholder }
         openOnClick: false,
         HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
       }),
-      Image.configure({
+      AlignableImage.configure({
         allowBase64: false,
         inline: false,
         resize: {
@@ -65,7 +93,61 @@ export function RichTextEditor({ content, onChange, onImageUpload, placeholder }
     <div className="rte-wrap rounded-2xl border border-stone-200/60 bg-white shadow-warm-sm">
       <Toolbar editor={editor} onImageUpload={onImageUpload} />
       <EditorContent editor={editor} className="rte-content" />
+      <ImageBubbleMenu editor={editor} />
     </div>
+  )
+}
+
+function ImageBubbleMenu({ editor }) {
+  const currentAlign = editor.getAttributes('image').align ?? null
+  const setAlign = (value) =>
+    editor.chain().focus().updateAttributes('image', { align: value }).run()
+
+  return (
+    <BubbleMenu
+      editor={editor}
+      shouldShow={({ editor: ed }) => ed.isActive('image')}
+      options={{ placement: 'top', offset: 8 }}
+      className="flex items-center gap-0.5 rounded-xl border border-stone-200 bg-white p-1 shadow-warm"
+    >
+      <AlignBtn active={currentAlign === null} onClick={() => setAlign(null)} label="Inline">
+        <AlignInlineIcon />
+      </AlignBtn>
+      <AlignBtn active={currentAlign === 'left'} onClick={() => setAlign('left')} label="Wrap left">
+        <AlignWrapLeftIcon />
+      </AlignBtn>
+      <AlignBtn
+        active={currentAlign === 'center'}
+        onClick={() => setAlign('center')}
+        label="Center"
+      >
+        <AlignCenterBlockIcon />
+      </AlignBtn>
+      <AlignBtn
+        active={currentAlign === 'right'}
+        onClick={() => setAlign('right')}
+        label="Wrap right"
+      >
+        <AlignWrapRightIcon />
+      </AlignBtn>
+    </BubbleMenu>
+  )
+}
+
+function AlignBtn({ active, onClick, label, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+        active ? 'bg-deep/10 text-deep' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-700'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -593,4 +675,16 @@ function UndoIcon() {
 }
 function RedoIcon() {
   return <svg {...s}><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+}
+function AlignInlineIcon() {
+  return <svg {...s} strokeWidth={1.8}><line x1="3" y1="6" x2="21" y2="6" /><rect x="3" y="10" width="6" height="6" rx="1" /><line x1="11" y1="11" x2="21" y2="11" /><line x1="11" y1="15" x2="21" y2="15" /><line x1="3" y1="20" x2="21" y2="20" /></svg>
+}
+function AlignWrapLeftIcon() {
+  return <svg {...s} strokeWidth={1.8}><rect x="3" y="5" width="8" height="8" rx="1" /><line x1="13" y1="6" x2="21" y2="6" /><line x1="13" y1="10" x2="21" y2="10" /><line x1="3" y1="16" x2="21" y2="16" /><line x1="3" y1="20" x2="21" y2="20" /></svg>
+}
+function AlignWrapRightIcon() {
+  return <svg {...s} strokeWidth={1.8}><rect x="13" y="5" width="8" height="8" rx="1" /><line x1="3" y1="6" x2="11" y2="6" /><line x1="3" y1="10" x2="11" y2="10" /><line x1="3" y1="16" x2="21" y2="16" /><line x1="3" y1="20" x2="21" y2="20" /></svg>
+}
+function AlignCenterBlockIcon() {
+  return <svg {...s} strokeWidth={1.8}><line x1="3" y1="5" x2="21" y2="5" /><rect x="7" y="9" width="10" height="6" rx="1" /><line x1="3" y1="19" x2="21" y2="19" /></svg>
 }
