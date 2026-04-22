@@ -1,6 +1,8 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '../components/layout/AppShell.jsx'
 import { ProtectedRoute } from './ProtectedRoute.jsx'
+import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 import { HomePage } from '../pages/HomePage.jsx'
 import { LoginPage } from '../pages/LoginPage.jsx'
 import { ForgotPasswordPage } from '../pages/ForgotPasswordPage.jsx'
@@ -12,7 +14,6 @@ import { TraineeLessonPage } from '../pages/TraineeLessonPage.jsx'
 import { CourseListPage } from '../pages/CourseListPage.jsx'
 import { AdminCourseDetailPage } from '../pages/AdminCourseDetailPage.jsx'
 import { AdminModuleDetailPage } from '../pages/AdminModuleDetailPage.jsx'
-import { LessonEditorPage } from '../pages/LessonEditorPage.jsx'
 import { AdminLessonPreviewPage } from '../pages/AdminLessonPreviewPage.jsx'
 import { UserManagementPage } from '../pages/UserManagementPage.jsx'
 import { ProfilePage } from '../pages/ProfilePage.jsx'
@@ -25,7 +26,24 @@ import { TraineeDetailPage } from '../pages/TraineeDetailPage.jsx'
 import { OverdueReportPage, AssessmentReportPage, CourseCompletionReportPage } from '../pages/ReportsPage.jsx'
 import { ReminderSettingsPage, ReminderLogPage, PendingRemindersPage } from '../pages/ReminderPages.jsx'
 import { AdminGuidePage } from '../pages/AdminGuidePage.jsx'
-import { AdminGuideCustomizePage } from '../pages/AdminGuideCustomizePage.jsx'
+
+// Heavy editor pages — code-split so trainees don't pay for CKEditor 5 (~700KB).
+const LessonEditorPage = lazy(() =>
+  import('../pages/LessonEditorPage.jsx').then((m) => ({ default: m.LessonEditorPage })),
+)
+const AdminGuideCustomizePage = lazy(() =>
+  import('../pages/AdminGuideCustomizePage.jsx').then((m) => ({
+    default: m.AdminGuideCustomizePage,
+  })),
+)
+
+function EditorFallback() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <LoadingSpinner />
+    </div>
+  )
+}
 
 export function AppRoutes() {
   return (
@@ -112,7 +130,9 @@ export function AppRoutes() {
           path="admin/lessons/:lessonId"
           element={
             <ProtectedRoute roles={['admin']}>
-              <LessonEditorPage />
+              <Suspense fallback={<EditorFallback />}>
+                <LessonEditorPage />
+              </Suspense>
             </ProtectedRoute>
           }
         />
@@ -229,7 +249,9 @@ export function AppRoutes() {
           path="admin/guide/customize"
           element={
             <ProtectedRoute roles={['admin']}>
-              <AdminGuideCustomizePage />
+              <Suspense fallback={<EditorFallback />}>
+                <AdminGuideCustomizePage />
+              </Suspense>
             </ProtectedRoute>
           }
         />

@@ -108,176 +108,109 @@
   }
 }
 
-/* ─── TipTap Rich Text Editor ─── */
-.rte-content .tiptap {
-  @apply min-h-[320px] px-5 py-4 text-sm text-stone-800 outline-none;
+/* ─── CKEditor 5 — chrome restyle to match warm/stone aesthetic ─── */
+.ck-elevate {
+  /* Reach into the CKEditor design tokens. Only the high-impact ones; the
+     defaults are left alone where they already look acceptable. */
+  --ck-color-base-background: #ffffff;
+  --ck-color-base-border: rgb(231 229 228 / 0.6);     /* stone-200/60 */
+  --ck-color-base-foreground: #f8fafc;
+  --ck-color-base-text: #1c1917;                       /* stone-900 */
+  /* deep = #2d3a2c (dark forest); re-declare numerically since theme() can't slash-modify */
+  --ck-color-focus-border: #2d3a2c;
+  --ck-color-focus-outer-shadow: rgba(45, 58, 44, 0.25);
+  --ck-color-button-default-hover-background: #f5f5f4; /* stone-100 */
+  --ck-color-button-default-active-background: #e7e5e4;/* stone-200 */
+  --ck-color-button-on-background: rgba(45, 58, 44, 0.1);
+  --ck-color-button-on-color: #2d3a2c;
+  --ck-color-button-on-hover-background: rgba(45, 58, 44, 0.15);
+  --ck-color-toolbar-background: #fafaf9;              /* stone-50 */
+  --ck-color-toolbar-border: rgb(231 229 228 / 0.6);
+  --ck-color-dropdown-panel-background: #ffffff;
+  --ck-color-dropdown-panel-border: rgb(231 229 228 / 0.8);
+  --ck-color-input-background: #ffffff;
+  --ck-color-input-border: #e7e5e4;
+  --ck-color-input-disabled-background: #fafaf9;
+  --ck-color-input-disabled-border: #e7e5e4;
+  --ck-color-list-background: #ffffff;
+  --ck-color-list-button-hover-background: #f5f5f4;
+  --ck-color-list-button-on-background: rgba(45, 58, 44, 0.1);
+  --ck-color-list-button-on-text: #2d3a2c;
+  --ck-border-radius: 0.625rem;                        /* rounded-[10px] */
+  --ck-focus-outer-shadow-geometry: 0 0 0 3px;
+  --ck-inner-shadow: none;
 }
 
-.rte-content .tiptap p.is-editor-empty:first-child::before {
-  @apply pointer-events-none float-left h-0 text-stone-400;
-  content: attr(data-placeholder);
+.ck-elevate .ck.ck-editor__main > .ck-editor__editable {
+  @apply min-h-[420px] px-6 py-5 text-[0.95rem] leading-relaxed text-stone-800;
+  border: none !important;
+  box-shadow: none !important;
+  background: #fff;
+  border-bottom-left-radius: calc(theme('borderRadius.2xl') - 1px);
+  border-bottom-right-radius: calc(theme('borderRadius.2xl') - 1px);
 }
 
-.rte-content .tiptap > * + * {
-  margin-top: 0.65em;
+.ck-elevate .ck.ck-toolbar {
+  border: none !important;
+  border-bottom: 1px solid rgb(231 229 228 / 0.6) !important;
+  border-top-left-radius: calc(theme('borderRadius.2xl') - 1px);
+  border-top-right-radius: calc(theme('borderRadius.2xl') - 1px);
+  padding: 0.375rem 0.5rem;
+  background: linear-gradient(to bottom, #fafaf9 0%, #fff 100%);
 }
 
-.rte-content .tiptap h1 { @apply font-display text-2xl font-semibold text-stone-900; }
-.rte-content .tiptap h2 { @apply font-display text-xl font-semibold text-stone-900; }
-.rte-content .tiptap h3 { @apply font-display text-lg font-semibold text-stone-800; }
-.rte-content .tiptap h4 { @apply font-display text-base font-semibold text-stone-800; }
-
-.rte-content .tiptap a {
-  @apply text-deep underline underline-offset-2;
+.ck-elevate .ck.ck-button,
+.ck-elevate a.ck.ck-button {
+  border-radius: 0.5rem;
+  transition: background-color 120ms ease, color 120ms ease;
 }
 
-.rte-content .tiptap blockquote {
+/* Editor content typography */
+.ck-elevate .ck-content {
+  font-family: inherit;
+}
+.ck-elevate .ck-content > * + *,
+.ck-elevate .ck-content > * {
+  margin-top: 0.6em;
+}
+.ck-elevate .ck-content h1 { @apply font-display text-2xl font-semibold text-stone-900; }
+.ck-elevate .ck-content h2 { @apply font-display text-xl font-semibold text-stone-900; }
+.ck-elevate .ck-content h3 { @apply font-display text-lg font-semibold text-stone-800; }
+.ck-elevate .ck-content h4 { @apply font-display text-base font-semibold text-stone-800; }
+.ck-elevate .ck-content a { @apply text-deep underline underline-offset-2; }
+.ck-elevate .ck-content blockquote {
   @apply border-l-4 border-stone-300 pl-4 italic text-stone-600;
 }
-
-.rte-content .tiptap ul { @apply ml-5 list-disc; }
-.rte-content .tiptap ol { @apply ml-5 list-decimal; }
-.rte-content .tiptap li { @apply mt-1; }
-
-.rte-content .tiptap pre {
-  @apply rounded-xl bg-stone-900 px-4 py-3 font-mono text-xs text-stone-100;
-}
-.rte-content .tiptap pre code {
-  @apply bg-transparent p-0 text-inherit;
-}
-.rte-content .tiptap code {
+.ck-elevate .ck-content ul { @apply ml-5 list-disc; }
+.ck-elevate .ck-content ol { @apply ml-5 list-decimal; }
+.ck-elevate .ck-content li { @apply mt-1; }
+.ck-elevate .ck-content code {
   @apply rounded bg-stone-100 px-1.5 py-0.5 font-mono text-xs text-stone-800;
 }
-
-.rte-content .tiptap hr {
+.ck-elevate .ck-content pre {
+  @apply rounded-xl bg-stone-900 px-4 py-3 font-mono text-xs text-stone-100;
+}
+.ck-elevate .ck-content hr {
   @apply my-4 border-stone-200;
 }
-
-.rte-content .tiptap img {
-  @apply inline-block h-auto max-w-full rounded-xl;
+.ck-elevate .ck-content figure.image img,
+.ck-elevate .ck-content img {
+  @apply rounded-xl;
+}
+.ck-elevate .ck-content figure.image > figcaption {
+  @apply mt-1 text-center text-xs italic text-stone-500;
+  background: transparent;
 }
 
-/* ── Image alignment (Word-like text wrap) — editor view ──
-   Resizable image is rendered inside [data-resize-container]; we float that
-   wrapper (using :has) so text in surrounding paragraphs flows around it. */
-.rte-content .tiptap [data-resize-container]:has(img.img-align-left) {
-  float: left;
-  margin: 0.25rem 1.25rem 0.5rem 0;
-  clear: left;
-  max-width: 60%;
-}
-.rte-content .tiptap [data-resize-container]:has(img.img-align-right) {
-  float: right;
-  margin: 0.25rem 0 0.5rem 1.25rem;
-  clear: right;
-  max-width: 60%;
-}
-.rte-content .tiptap [data-resize-container]:has(img.img-align-center) {
-  display: block;
-  float: none;
-  margin: 1rem auto;
-  text-align: center;
-}
-/* Make sure the editor's content area contains the floats */
-.rte-content .tiptap {
+/* Tighten the editor's flow-root for the floats below */
+.ck-elevate .ck-content {
   display: flow-root;
 }
-/* Resizable image node view: selection ring is on the container, not the img */
-.rte-content .tiptap [data-resize-container][data-node="image"].ProseMirror-selectednode {
-  @apply rounded-xl ring-2 ring-deep/40;
-}
-.rte-content .tiptap img.ProseMirror-selectednode {
-  @apply ring-2 ring-deep/40;
-}
 
-/*
-  TipTap ResizableNodeView creates [data-resize-handle] divs with no intrinsic size;
-  without these rules handles are 0×0 and invisible.
-*/
-.rte-content .tiptap [data-resize-wrapper] {
-  overflow: visible;
+/* ─── Rendered prose (trainee + admin preview) ─── */
+.prose {
+  display: flow-root;
 }
-
-.rte-content .tiptap [data-resize-handle] {
-  z-index: 5;
-  box-sizing: border-box;
-  @apply border-2 border-stone-500 bg-white shadow-sm;
-  border-radius: 3px;
-}
-
-.rte-content .tiptap [data-resize-handle="top-left"],
-.rte-content .tiptap [data-resize-handle="top-right"],
-.rte-content .tiptap [data-resize-handle="bottom-left"],
-.rte-content .tiptap [data-resize-handle="bottom-right"] {
-  width: 11px;
-  height: 11px;
-}
-
-.rte-content .tiptap [data-resize-handle="top"],
-.rte-content .tiptap [data-resize-handle="bottom"] {
-  height: 8px;
-}
-
-.rte-content .tiptap [data-resize-handle="left"],
-.rte-content .tiptap [data-resize-handle="right"] {
-  width: 8px;
-}
-
-.rte-content .tiptap [data-resize-handle="top-left"] {
-  cursor: nwse-resize;
-}
-.rte-content .tiptap [data-resize-handle="top-right"] {
-  cursor: nesw-resize;
-}
-.rte-content .tiptap [data-resize-handle="bottom-left"] {
-  cursor: nesw-resize;
-}
-.rte-content .tiptap [data-resize-handle="bottom-right"] {
-  cursor: nwse-resize;
-}
-.rte-content .tiptap [data-resize-handle="top"],
-.rte-content .tiptap [data-resize-handle="bottom"] {
-  cursor: ns-resize;
-}
-.rte-content .tiptap [data-resize-handle="left"],
-.rte-content .tiptap [data-resize-handle="right"] {
-  cursor: ew-resize;
-}
-
-.rte-content .tiptap mark {
-  @apply rounded px-0.5;
-}
-
-/* Table styles */
-.rte-content .tiptap table {
-  @apply w-full border-collapse overflow-hidden rounded-lg;
-}
-.rte-content .tiptap table td,
-.rte-content .tiptap table th {
-  @apply border border-stone-200 px-3 py-2 text-left text-sm;
-  min-width: 80px;
-}
-.rte-content .tiptap table th {
-  @apply bg-stone-50 font-semibold text-stone-700;
-}
-.rte-content .tiptap table .selectedCell {
-  @apply bg-deep/5;
-}
-.rte-content .tiptap table td > *,
-.rte-content .tiptap table th > * {
-  margin-bottom: 0;
-}
-
-/* YouTube embed */
-.rte-content .tiptap div[data-youtube-video] {
-  @apply my-3;
-}
-.rte-content .tiptap div[data-youtube-video] iframe {
-  @apply w-full max-w-2xl rounded-xl;
-  aspect-ratio: 16/9;
-}
-
-/* Prose styles for rendered reading content (preview + trainee) */
 .prose table {
   @apply w-full border-collapse;
 }
@@ -289,7 +222,11 @@
   @apply bg-stone-50 font-semibold;
 }
 .prose img {
-  @apply inline-block h-auto max-w-full rounded-xl;
+  @apply h-auto max-w-full rounded-xl;
+}
+.prose figure.image img {
+  width: 100%;
+  height: auto;
 }
 .prose mark {
   @apply rounded px-0.5;
@@ -298,39 +235,168 @@
   @apply w-full max-w-2xl rounded-xl;
   aspect-ratio: 16/9;
 }
-
-/* ── Image alignment (Word-like text wrap) — rendered prose ── */
-.prose {
-  display: flow-root;
+.prose figure.image > figcaption {
+  @apply mt-1 text-center text-xs italic text-stone-500;
 }
+.prose hr {
+  @apply my-4 border-stone-200;
+}
+
+/* ── Image styles — match CKEditor 5 'image-style-*' classes ──
+   Wrap (inline image floats so text flows around it):  alignLeft / alignRight
+   Block-aligned (image is its own line):              alignBlockLeft / alignCenter / alignBlockRight
+   Side (Word-style tight wrap, narrow):               side
+   Inline / block defaults:                            inline / block
+
+   Rules apply to both rendered prose and the editor view (.ck-content). */
+.prose figure.image,
+.ck-elevate .ck-content figure.image {
+  display: table;
+  clear: both;
+  text-align: center;
+  margin: 0.9em auto;
+  min-width: 50px;
+}
+.prose figure.image-style-block-align-left,
+.prose figure.image-style-align-block-left,
+.ck-elevate .ck-content figure.image-style-block-align-left,
+.ck-elevate .ck-content figure.image-style-align-block-left {
+  margin-right: auto;
+  margin-left: 0;
+}
+.prose figure.image-style-block-align-right,
+.prose figure.image-style-align-block-right,
+.ck-elevate .ck-content figure.image-style-block-align-right,
+.ck-elevate .ck-content figure.image-style-align-block-right {
+  margin-left: auto;
+  margin-right: 0;
+}
+.prose figure.image-style-align-center,
+.ck-elevate .ck-content figure.image-style-align-center {
+  margin-left: auto;
+  margin-right: auto;
+}
+.prose figure.image-style-align-left,
+.ck-elevate .ck-content figure.image-style-align-left {
+  float: left;
+  margin: 0.5em 1.25em 0.75em 0;
+  max-width: 50%;
+  clear: left;
+}
+.prose figure.image-style-align-right,
+.ck-elevate .ck-content figure.image-style-align-right {
+  float: right;
+  margin: 0.5em 0 0.75em 1.25em;
+  max-width: 50%;
+  clear: right;
+}
+.prose figure.image-style-side,
+.ck-elevate .ck-content figure.image-style-side {
+  float: right;
+  margin: 0.5em 0 0.75em 1.5em;
+  max-width: 40%;
+  clear: right;
+}
+
+/* Custom Word-style tight wrap (registered as 'tightWrapLeft' / 'tightWrapRight'
+   in CKEditor — the className lands as image-style-tight-left/right). */
+.prose figure.image-style-tight-left,
+.ck-elevate .ck-content figure.image-style-tight-left {
+  float: left;
+  clear: left;
+  margin: 0.5em 1.25em 0.75em 0;
+  max-width: 45%;
+}
+.prose figure.image-style-tight-right,
+.ck-elevate .ck-content figure.image-style-tight-right {
+  float: right;
+  clear: right;
+  margin: 0.5em 0 0.75em 1.25em;
+  max-width: 45%;
+}
+/* Inline images that wrap (CKEditor's wrapText for inline images) */
+.prose .image-inline,
+.ck-elevate .ck-content .image-inline {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: flex-start;
+}
+.prose .image-style-align-left.image-inline,
+.ck-elevate .ck-content .image-style-align-left.image-inline {
+  float: left;
+  margin: 0.5em 1.25em 0.75em 0;
+}
+.prose .image-style-align-right.image-inline,
+.ck-elevate .ck-content .image-style-align-right.image-inline {
+  float: right;
+  margin: 0.5em 0 0.75em 1.25em;
+}
+/* Resized image preserves the inline width */
+.prose .image_resized,
+.ck-elevate .ck-content .image_resized {
+  max-width: 100%;
+}
+.prose .image_resized img,
+.ck-elevate .ck-content .image_resized img {
+  width: 100%;
+  height: auto;
+}
+
+/* ── Legacy TipTap classes — keep prior content rendering correctly. ── */
 .prose img.img-align-left {
   float: left;
-  margin: 0.25rem 1.25rem 0.5rem 0;
-  clear: left;
+  margin: 0.5em 1.25em 0.75em 0;
   max-width: 60%;
+  clear: left;
 }
 .prose img.img-align-right {
   float: right;
-  margin: 0.25rem 0 0.5rem 1.25rem;
-  clear: right;
+  margin: 0.5em 0 0.75em 1.25em;
   max-width: 60%;
+  clear: right;
 }
 .prose img.img-align-center {
   display: block;
   float: none;
-  margin: 1rem auto;
+  margin: 1em auto;
 }
+
+/* CKEditor highlight markers — match the colors registered in the editor config */
+.prose .marker-yellow,
+.ck-elevate .ck-content .marker-yellow { background-color: #fef08a; }
+.prose .marker-green,
+.ck-elevate .ck-content .marker-green { background-color: #bbf7d0; }
+.prose .marker-blue,
+.ck-elevate .ck-content .marker-blue { background-color: #bfdbfe; }
+.prose .marker-pink,
+.ck-elevate .ck-content .marker-pink { background-color: #fecdd3; }
+.prose .marker-purple,
+.ck-elevate .ck-content .marker-purple { background-color: #e9d5ff; }
+.prose .pen-red,
+.ck-elevate .ck-content .pen-red { color: #dc2626; }
+.prose .pen-green,
+.ck-elevate .ck-content .pen-green { color: #166534; }
 
 /* On narrow viewports, floats hurt readability — stack the image instead. */
 @media (max-width: 640px) {
+  .prose figure.image-style-align-left,
+  .prose figure.image-style-align-right,
+  .prose figure.image-style-side,
+  .prose figure.image-style-tight-left,
+  .prose figure.image-style-tight-right,
+  .prose .image-style-align-left.image-inline,
+  .prose .image-style-align-right.image-inline,
   .prose img.img-align-left,
   .prose img.img-align-right,
-  .rte-content .tiptap [data-resize-container]:has(img.img-align-left),
-  .rte-content .tiptap [data-resize-container]:has(img.img-align-right) {
+  .ck-elevate .ck-content figure.image-style-align-left,
+  .ck-elevate .ck-content figure.image-style-align-right,
+  .ck-elevate .ck-content figure.image-style-side,
+  .ck-elevate .ck-content figure.image-style-tight-left,
+  .ck-elevate .ck-content figure.image-style-tight-right {
     float: none;
     display: block;
     max-width: 100%;
-    margin: 1rem auto;
+    margin: 1em auto;
   }
 }
 

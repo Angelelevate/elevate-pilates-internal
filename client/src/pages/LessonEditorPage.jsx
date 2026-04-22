@@ -5,7 +5,7 @@ import { putFileToSignedUrl } from '../services/directStorageUpload.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { TraineeVisibilityTip } from '../components/admin/TraineeVisibilityTip.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
-import { RichTextEditor } from '../components/admin/RichTextEditor.jsx'
+import { CKEditor5Editor } from '../components/admin/CKEditor5Editor.jsx'
 
 export function LessonEditorPage() {
   const { showToast } = useToast()
@@ -367,7 +367,7 @@ export function LessonEditorPage() {
 
       {lesson.type === 'reading' ? (
         <div className="space-y-3">
-          <RichTextEditor
+          <CKEditor5Editor
             key={lessonId}
             content={body}
             onChange={setBody}

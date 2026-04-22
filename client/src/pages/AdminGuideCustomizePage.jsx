@@ -4,7 +4,7 @@ import { api } from '../services/api.js'
 import { putFileToSignedUrl } from '../services/directStorageUpload.js'
 import { useToast } from '../contexts/ToastContext.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
-import { RichTextEditor } from '../components/admin/RichTextEditor.jsx'
+import { CKEditor5Editor } from '../components/admin/CKEditor5Editor.jsx'
 
 export function AdminGuideCustomizePage() {
   const { showToast } = useToast()
@@ -348,7 +348,7 @@ export function AdminGuideCustomizePage() {
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-stone-600">Content</label>
-            <RichTextEditor
+            <CKEditor5Editor
               key={`new-section-${sectionEditorKey}`}
               content={sectionBody}
               onChange={setSectionBody}
@@ -386,7 +386,7 @@ export function AdminGuideCustomizePage() {
                       onChange={(e) => setEditSectionTitle(e.target.value)}
                       className="ui-input w-full max-w-xl rounded-xl border border-stone-200 px-3.5 py-2.5 text-sm outline-none ring-deep/30 focus:border-clay/40 focus:ring-2"
                     />
-                    <RichTextEditor
+                    <CKEditor5Editor
                       key={`edit-${row.id}`}
                       content={editSectionBody}
                       onChange={setEditSectionBody}
