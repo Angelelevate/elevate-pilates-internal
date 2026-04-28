@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../services/api.js'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
+import { AdminQuizPreview } from '../components/quiz/AdminQuizPreview.jsx'
 
 export function AdminLessonPreviewPage() {
   const { lessonId } = useParams()
@@ -68,11 +69,7 @@ export function AdminLessonPreviewPage() {
         />
       ) : null}
       {lesson.type === 'quiz' || lesson.type === 'exam' ? (
-        <div className="ui-surface p-5">
-          <p className="text-sm text-stone-600">
-            Quiz preview requires Module 5. Reference: {lesson.content?.quizId || '—'}
-          </p>
-        </div>
+        <AdminQuizPreview quizId={lesson.content?.quizId} />
       ) : null}
     </div>
   )
