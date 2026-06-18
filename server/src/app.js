@@ -12,12 +12,16 @@ export function createApp() {
   initFirebaseAdmin()
 
   const { clientOrigin, nodeEnv } = getEnv()
+  const corsOrigins = [
+    clientOrigin,
+    'https://elevate-pilates-angel.vercel.app',
+  ]
   const app = express()
 
   app.use(helmet())
   app.use(
     cors({
-      origin: clientOrigin,
+      origin: corsOrigins,
       credentials: true,
     }),
   )

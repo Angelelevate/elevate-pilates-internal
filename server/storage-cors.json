@@ -3,7 +3,8 @@
     "origin": [
       "http://localhost:5173",
       "https://elevate-pilates-internal-client.vercel.app",
-      "https://elevate-pilates-internal-client-seven.vercel.app"
+      "https://elevate-pilates-internal-client-seven.vercel.app",
+      "https://elevate-pilates-angel.vercel.app"
     ],
     "method": ["PUT", "GET", "HEAD", "OPTIONS"],
     "responseHeader": ["Content-Type", "Content-Length", "x-goog-resumable"],
