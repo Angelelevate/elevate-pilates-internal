@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { getDb } from '../utils/firestoreDb.js'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
 import {
   getReminderSettings,
@@ -70,21 +71,58 @@ adminRoutes.get('/pending', async (req, res, next) => {
     const settings = await getReminderSettings(db)
     const now = new Date()
     const enSnap = await db.collection('enrollments').get()
+
+    const activeEnrollments = enSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((en) => en.status === 'active')
+      .filter((en) => {
+        const dueDate = en.dueDate
+          ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate))
+          : null
+        return Boolean(dueDate)
+      })
+
+    const usersById = await getDocSnapshotsById(
+      db,
+      'users',
+      activeEnrollments.map((en) => en.traineeId),
+    )
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      activeEnrollments.map((en) => `${en.traineeId}_${en.courseId}`),
+    )
+
+    const remindersByEnrollmentId = new Map()
+    const enrollmentIds = activeEnrollments.map((en) => en.id)
+    const chunkSize = 10
+    for (let i = 0; i < enrollmentIds.length; i += chunkSize) {
+      const chunk = enrollmentIds.slice(i, i + chunkSize)
+      if (chunk.length === 0) continue
+      const logSnap = await db.collection('reminderLog').where('enrollmentId', 'in', chunk).get()
+      for (const doc of logSnap.docs) {
+        const row = doc.data()
+        const key = row.enrollmentId
+        if (!key) continue
+        const arr = remindersByEnrollmentId.get(key) || []
+        arr.push(row)
+        remindersByEnrollmentId.set(key, arr)
+      }
+    }
+
     const pending = []
 
-    for (const d of enSnap.docs) {
-      const en = d.data()
-      if (en.status !== 'active') continue
+    for (const en of activeEnrollments) {
       const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
       if (!dueDate) continue
 
-      const uDoc = await db.collection('users').doc(en.traineeId).get()
-      if (!uDoc.exists) continue
+      const uDoc = usersById.get(en.traineeId)
+      if (!uDoc?.exists) continue
       const user = uDoc.data()
       if (user.disabled) continue
 
-      const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-      const cp = cpDoc.exists ? cpDoc.data() : {}
+      const cpDoc = courseProgressById.get(`${en.traineeId}_${en.courseId}`)
+      const cp = cpDoc?.exists ? cpDoc.data() : {}
       if (cp.status === 'completed') continue
 
       const daysUntilDue = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24))
@@ -93,14 +131,10 @@ adminRoutes.get('/pending', async (req, res, next) => {
       if (!isOverdue && !isWarning) continue
 
       // Check max reminders
-      const existingSnap = await db.collection('reminderLog')
-        .where('traineeId', '==', en.traineeId)
-        .where('enrollmentId', '==', d.id)
-        .get()
-      if (existingSnap.size >= settings.maxReminders) continue
+      const reminders = remindersByEnrollmentId.get(en.id) || []
+      if (reminders.length >= settings.maxReminders) continue
 
       // Check cooldown
-      const reminders = existingSnap.docs.map((rd) => rd.data())
       const mostRecent = reminders
         .map((r) => r.sentAt ? (r.sentAt.toDate ? r.sentAt.toDate() : new Date(r.sentAt)) : null)
         .filter(Boolean)
@@ -117,8 +151,8 @@ adminRoutes.get('/pending', async (req, res, next) => {
         dueDate: serializeValue(en.dueDate),
         daysOverdue: isOverdue ? Math.abs(daysUntilDue) : 0,
         type: isWarning ? 'warning' : 'overdue',
-        enrollmentId: d.id,
-        remindersSent: existingSnap.size,
+        enrollmentId: en.id,
+        remindersSent: reminders.length,
         maxReminders: settings.maxReminders,
       })
     }

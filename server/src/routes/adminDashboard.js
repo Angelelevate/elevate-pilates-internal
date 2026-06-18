@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { getDb } from '../utils/firestoreDb.js'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
 
 export const adminDashboardRouter = Router()
@@ -10,6 +11,12 @@ function dbRequired() {
   const db = getDb()
   if (!db) { const err = new Error('Database not configured'); err.status = 503; throw err }
   return db
+}
+
+function asDate(value) {
+  if (!value) return null
+  if (value.toDate) return value.toDate()
+  return new Date(value)
 }
 
 // ── Dashboard summary ───────────────────────────────────────────────
@@ -61,42 +68,56 @@ adminDashboardRouter.get('/at-risk', async (req, res, next) => {
       .map((d) => ({ id: d.id, ...d.data() }))
       .filter((e) => e.status === 'active')
 
-    const now = new Date()
-    const atRisk = []
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      activeEnrollments.map((en) => `${en.traineeId}_${en.courseId}`),
+    )
 
+    const now = new Date()
+    const riskCandidates = []
     for (const en of activeEnrollments) {
-      const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-      const cp = cpDoc.exists ? cpDoc.data() : null
+      const cpDoc = courseProgressById.get(`${en.traineeId}_${en.courseId}`)
+      const cp = cpDoc?.exists ? cpDoc.data() : null
       if (cp?.status === 'completed') continue
 
       const progress = cp?.percentComplete || 0
-      const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
+      const dueDate = asDate(en.dueDate)
       if (!dueDate) continue
 
       const isOverdue = dueDate < now
-      const totalDays = (dueDate - new Date(en.enrolledAt?.toDate?.() || en.enrolledAt || now)) / (1000 * 60 * 60 * 24)
-      const elapsed = (now - new Date(en.enrolledAt?.toDate?.() || en.enrolledAt || now)) / (1000 * 60 * 60 * 24)
+      const enrolledAt = asDate(en.enrolledAt) || now
+      const totalDays = (dueDate - enrolledAt) / (1000 * 60 * 60 * 24)
+      const elapsed = (now - enrolledAt) / (1000 * 60 * 60 * 24)
       const timeElapsedPct = totalDays > 0 ? (elapsed / totalDays) * 100 : 0
       const isLowProgress = progress < 25 && timeElapsedPct > 50
 
       if (isOverdue || isLowProgress) {
-        const uDoc = await db.collection('users').doc(en.traineeId).get()
-        const user = uDoc.exists ? uDoc.data() : {}
-        const daysOverdue = isOverdue ? Math.ceil((now - dueDate) / (1000 * 60 * 60 * 24)) : 0
-
-        atRisk.push({
-          traineeId: en.traineeId,
-          name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || en.traineeId,
-          email: user.email || '',
-          progress,
-          currentModuleId: cp?.currentModuleId || null,
-          dueDate: serializeValue(en.dueDate),
-          daysOverdue,
-          isOverdue,
-          enrollmentId: en.id,
-        })
+        riskCandidates.push({ en, cp, progress, dueDate, isOverdue })
       }
     }
+
+    const usersById = await getDocSnapshotsById(
+      db,
+      'users',
+      riskCandidates.map((r) => r.en.traineeId),
+    )
+    const atRisk = riskCandidates.map(({ en, cp, progress, dueDate, isOverdue }) => {
+      const uDoc = usersById.get(en.traineeId)
+      const user = uDoc?.exists ? uDoc.data() : {}
+      const daysOverdue = isOverdue ? Math.ceil((now - dueDate) / (1000 * 60 * 60 * 24)) : 0
+      return {
+        traineeId: en.traineeId,
+        name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || en.traineeId,
+        email: user.email || '',
+        progress,
+        currentModuleId: cp?.currentModuleId || null,
+        dueDate: serializeValue(en.dueDate),
+        daysOverdue,
+        isOverdue,
+        enrollmentId: en.id,
+      }
+    })
 
     atRisk.sort((a, b) => b.daysOverdue - a.daysOverdue)
     res.json(atRisk)
@@ -139,16 +160,13 @@ adminDashboardRouter.get('/recent-activity', async (req, res, next) => {
 
     // Enrich with user names
     const traineeIds = [...new Set(events.map((e) => e.traineeId))]
-    const nameMap = new Map()
-    for (const uid of traineeIds) {
-      const uDoc = await db.collection('users').doc(uid).get()
-      if (uDoc.exists) {
-        const u = uDoc.data()
-        nameMap.set(uid, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || uid)
-      } else {
-        nameMap.set(uid, uid)
-      }
-    }
+    const usersById = await getDocSnapshotsById(db, 'users', traineeIds)
+    const nameMap = new Map(traineeIds.map((uid) => {
+      const uDoc = usersById.get(uid)
+      if (!uDoc?.exists) return [uid, uid]
+      const u = uDoc.data()
+      return [uid, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || uid]
+    }))
 
     const enriched = events.map((e) => ({ ...e, traineeName: nameMap.get(e.traineeId) || e.traineeId }))
     enriched.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
@@ -295,8 +313,24 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
     if (allEnrollments.length === 0) return res.json({ user, courses: [], attempts: [], activity: [], reminders: [] })
 
     // Build per-course details for all enrollments
-    const courseSnap = await db.collection('courses').limit(500).get()
+    const [courseSnap, attSnap] = await Promise.all([
+      db.collection('courses').limit(500).get(),
+      db.collection('quizAttempts').where('traineeId', '==', traineeId).get(),
+    ])
     const courseTitleMap = new Map(courseSnap.docs.map((d) => [d.id, d.data().title || 'Untitled']))
+    const attempts = attSnap.docs.map((d) => serializeDoc(d))
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    const attemptsByQuizId = new Map()
+    for (const a of attempts) {
+      const arr = attemptsByQuizId.get(a.quizId) || []
+      arr.push(a)
+      attemptsByQuizId.set(a.quizId, arr)
+    }
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      allEnrollments.map((en) => `${traineeId}_${en.courseId}`),
+    )
 
     const now = new Date()
     const courseDetails = []
@@ -304,8 +338,8 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
     for (const enrollment of allEnrollments) {
       const courseId = enrollment.courseId
       const courseTitle = courseTitleMap.get(courseId) || 'Unknown Course'
-      const cpDoc = await db.collection('courseProgress').doc(`${traineeId}_${courseId}`).get()
-      const cp = cpDoc.exists ? cpDoc.data() : null
+      const cpDoc = courseProgressById.get(`${traineeId}_${courseId}`)
+      const cp = cpDoc?.exists ? cpDoc.data() : null
 
       const dueDate = enrollment.dueDate ? new Date(enrollment.dueDate) : null
       const isOverdue = dueDate && dueDate < now && enrollment.status === 'active' && cp?.status !== 'completed'
@@ -334,12 +368,9 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
         let examAttempts = 0
         for (const el of examLessons) {
           if (el.content?.quizId) {
-            const attSnap = await db.collection('quizAttempts')
-              .where('quizId', '==', el.content.quizId)
-              .where('traineeId', '==', traineeId)
-              .get()
-            examAttempts = attSnap.size
-            const scores = attSnap.docs.map((d) => d.data().score).filter((s) => s != null)
+            const quizAttempts = attemptsByQuizId.get(el.content.quizId) || []
+            examAttempts = quizAttempts.length
+            const scores = quizAttempts.map((a) => a.score).filter((s) => s != null)
             examScore = scores.length > 0 ? Math.max(...scores) : null
           }
         }
@@ -361,23 +392,18 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
         courseId,
         courseTitle,
         enrollment: serializeValue(enrollment),
-        courseProgress: cpDoc.exists ? serializeDoc(cpDoc) : null,
+        courseProgress: cpDoc?.exists ? serializeDoc(cpDoc) : null,
         status: effectiveStatus,
         modules: moduleDetails,
       })
     }
 
-    // Assessment history (across all courses)
-    const attSnap = await db.collection('quizAttempts').where('traineeId', '==', traineeId).get()
-    const attempts = attSnap.docs.map((d) => serializeDoc(d))
-      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
-
     const quizIds = [...new Set(attempts.map((a) => a.quizId))]
-    const quizNameMap = new Map()
-    for (const qid of quizIds) {
-      const qDoc = await db.collection('quizzes').doc(qid).get()
-      if (qDoc.exists) quizNameMap.set(qid, { title: qDoc.data().title, type: qDoc.data().type })
-    }
+    const quizDocsById = await getDocSnapshotsById(db, 'quizzes', quizIds)
+    const quizNameMap = new Map(quizIds.map((qid) => {
+      const qDoc = quizDocsById.get(qid)
+      return [qid, qDoc?.exists ? { title: qDoc.data().title, type: qDoc.data().type } : null]
+    }))
     const enrichedAttempts = attempts.map((a) => ({
       ...a,
       quizTitle: quizNameMap.get(a.quizId)?.title || 'Unknown',
@@ -463,30 +489,45 @@ adminDashboardRouter.get('/reports/overdue', async (req, res, next) => {
     const db = dbRequired()
     const enSnap = await db.collection('enrollments').get()
     const now = new Date()
+    const overdueEnrollments = enSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((en) => en.status === 'active')
+      .filter((en) => {
+        const dueDate = asDate(en.dueDate)
+        return Boolean(dueDate && dueDate < now)
+      })
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      overdueEnrollments.map((en) => `${en.traineeId}_${en.courseId}`),
+    )
+    const usersById = await getDocSnapshotsById(
+      db,
+      'users',
+      overdueEnrollments.map((en) => en.traineeId),
+    )
     const rows = []
 
-    for (const d of enSnap.docs) {
-      const en = d.data()
-      if (en.status !== 'active') continue
-      const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
-      if (!dueDate || dueDate >= now) continue
+    for (const en of overdueEnrollments) {
+      const dueDate = asDate(en.dueDate)
+      if (!dueDate) continue
 
-      const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-      if (cpDoc.exists && cpDoc.data().status === 'completed') continue
+      const cpDoc = courseProgressById.get(`${en.traineeId}_${en.courseId}`)
+      if (cpDoc?.exists && cpDoc.data().status === 'completed') continue
 
-      const uDoc = await db.collection('users').doc(en.traineeId).get()
-      const user = uDoc.exists ? uDoc.data() : {}
+      const uDoc = usersById.get(en.traineeId)
+      const user = uDoc?.exists ? uDoc.data() : {}
 
       rows.push({
         traineeId: en.traineeId,
         name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || en.traineeId,
         email: user.email || '',
-        progress: cpDoc.exists ? cpDoc.data().percentComplete || 0 : 0,
-        currentModuleId: cpDoc.exists ? cpDoc.data().currentModuleId : null,
+        progress: cpDoc?.exists ? cpDoc.data().percentComplete || 0 : 0,
+        currentModuleId: cpDoc?.exists ? cpDoc.data().currentModuleId : null,
         dueDate: serializeValue(en.dueDate),
         daysOverdue: Math.ceil((now - dueDate) / (1000 * 60 * 60 * 24)),
-        lastActive: cpDoc.exists ? serializeValue(cpDoc.data().updatedAt) : null,
-        enrollmentId: d.id,
+        lastActive: cpDoc?.exists ? serializeValue(cpDoc.data().updatedAt) : null,
+        enrollmentId: en.id,
       })
     }
 
@@ -607,15 +648,26 @@ adminDashboardRouter.get('/export/trainees', async (req, res, next) => {
     // Reuse the trainee list logic
     const enSnap = await db.collection('enrollments').get()
     const now = new Date()
+    const enrollments = enSnap.docs
+      .map((d) => d.data())
+      .filter((en) => en.status !== 'withdrawn')
+    const usersById = await getDocSnapshotsById(
+      db,
+      'users',
+      enrollments.map((en) => en.traineeId),
+    )
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      enrollments.map((en) => `${en.traineeId}_${en.courseId}`),
+    )
     const rows = []
 
-    for (const d of enSnap.docs) {
-      const en = d.data()
-      if (en.status === 'withdrawn') continue
-      const uDoc = await db.collection('users').doc(en.traineeId).get()
-      const user = uDoc.exists ? uDoc.data() : {}
-      const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-      const cp = cpDoc.exists ? cpDoc.data() : null
+    for (const en of enrollments) {
+      const uDoc = usersById.get(en.traineeId)
+      const user = uDoc?.exists ? uDoc.data() : {}
+      const cpDoc = courseProgressById.get(`${en.traineeId}_${en.courseId}`)
+      const cp = cpDoc?.exists ? cpDoc.data() : null
       const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
 
       rows.push({
@@ -648,22 +700,37 @@ adminDashboardRouter.get('/export/overdue', async (req, res, next) => {
     const db = dbRequired()
     const enSnap = await db.collection('enrollments').get()
     const now = new Date()
+    const overdueEnrollments = enSnap.docs
+      .map((d) => d.data())
+      .filter((en) => en.status === 'active')
+      .filter((en) => {
+        const dueDate = asDate(en.dueDate)
+        return Boolean(dueDate && dueDate < now)
+      })
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      overdueEnrollments.map((en) => `${en.traineeId}_${en.courseId}`),
+    )
+    const usersById = await getDocSnapshotsById(
+      db,
+      'users',
+      overdueEnrollments.map((en) => en.traineeId),
+    )
     const rows = []
 
-    for (const d of enSnap.docs) {
-      const en = d.data()
-      if (en.status !== 'active') continue
-      const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
-      if (!dueDate || dueDate >= now) continue
-      const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-      if (cpDoc.exists && cpDoc.data().status === 'completed') continue
-      const uDoc = await db.collection('users').doc(en.traineeId).get()
-      const user = uDoc.exists ? uDoc.data() : {}
+    for (const en of overdueEnrollments) {
+      const dueDate = asDate(en.dueDate)
+      if (!dueDate) continue
+      const cpDoc = courseProgressById.get(`${en.traineeId}_${en.courseId}`)
+      if (cpDoc?.exists && cpDoc.data().status === 'completed') continue
+      const uDoc = usersById.get(en.traineeId)
+      const user = uDoc?.exists ? uDoc.data() : {}
 
       rows.push({
         name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
         email: user.email || '',
-        progress: cpDoc.exists ? cpDoc.data().percentComplete || 0 : 0,
+        progress: cpDoc?.exists ? cpDoc.data().percentComplete || 0 : 0,
         dueDate: dueDate.toISOString().split('T')[0],
         daysOverdue: Math.ceil((now - dueDate) / (1000 * 60 * 60 * 24)),
       })
@@ -725,16 +792,13 @@ adminDashboardRouter.get('/export/trainees/:traineeId/attempts', async (req, res
   try {
     const db = dbRequired()
     const attSnap = await db.collection('quizAttempts').where('traineeId', '==', req.params.traineeId).get()
-    const quizIds = [...new Set(attSnap.docs.map((d) => d.data().quizId))]
-    const quizMap = new Map()
-    for (const qid of quizIds) {
-      const qDoc = await db.collection('quizzes').doc(qid).get()
-      if (qDoc.exists) quizMap.set(qid, qDoc.data())
-    }
+    const attempts = attSnap.docs.map((d) => d.data())
+    const quizIds = [...new Set(attempts.map((a) => a.quizId))]
+    const quizzesById = await getDocSnapshotsById(db, 'quizzes', quizIds)
 
-    const rows = attSnap.docs.map((d) => {
-      const a = d.data()
-      const quiz = quizMap.get(a.quizId) || {}
+    const rows = attempts.map((a) => {
+      const qDoc = quizzesById.get(a.quizId)
+      const quiz = qDoc?.exists ? qDoc.data() : {}
       return {
         assessment: quiz.title || a.quizId,
         type: quiz.type || '',

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { requireNoForcedPasswordChange } from '../middleware/mustChangePasswordMiddleware.js'
 import { getDb } from '../utils/firestoreDb.js'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { serializeDoc } from '../utils/serialize.js'
 
 export const traineeProgressRouter = Router()
@@ -59,16 +60,21 @@ traineeProgressRouter.get('/modules/:moduleId', async (req, res, next) => {
       .filter((l) => l.status === 'published')
       .sort((a, b) => (a.order || 0) - (b.order || 0))
 
-    const lessonDetails = []
-    for (const l of lessons) {
-      const pDoc = await db.collection('lessonProgress').doc(progressDocId(req.user.uid, l.id)).get()
-      lessonDetails.push({
+    const progressById = await getDocSnapshotsById(
+      db,
+      'lessonProgress',
+      lessons.map((l) => progressDocId(req.user.uid, l.id)),
+    )
+
+    const lessonDetails = lessons.map((l) => {
+      const pDoc = progressById.get(progressDocId(req.user.uid, l.id))
+      return {
         lessonId: l.id,
         title: l.title,
         type: l.type,
-        status: pDoc.exists ? pDoc.data().status : 'not_started',
-      })
-    }
+        status: pDoc?.exists ? pDoc.data().status : 'not_started',
+      }
+    })
 
     res.json({ ...serializeDoc(mpDoc), lessons: lessonDetails })
   } catch (e) { next(e) }
@@ -80,12 +86,16 @@ adminProgressRouter.get('/courses/:courseId', async (req, res, next) => {
   try {
     const db = dbRequired()
     const snap = await db.collection('courseProgress').where('courseId', '==', req.params.courseId).get()
-    const rows = []
-    for (const d of snap.docs) {
-      const cp = serializeDoc(d)
-      const uDoc = await db.collection('users').doc(cp.traineeId).get()
-      rows.push({ ...cp, trainee: uDoc.exists ? serializeDoc(uDoc) : null })
-    }
+    const courseProgressRows = snap.docs.map((d) => serializeDoc(d))
+    const usersById = await getDocSnapshotsById(
+      db,
+      'users',
+      courseProgressRows.map((cp) => cp.traineeId),
+    )
+    const rows = courseProgressRows.map((cp) => {
+      const uDoc = usersById.get(cp.traineeId)
+      return { ...cp, trainee: uDoc?.exists ? serializeDoc(uDoc) : null }
+    })
     res.json(rows)
   } catch (e) { next(e) }
 })

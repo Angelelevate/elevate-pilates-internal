@@ -3,6 +3,17 @@ import { Link } from 'react-router-dom'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
 import { api } from '../services/api.js'
 
+let myCoursesInFlight = null
+
+function fetchMyCoursesOnce() {
+  if (!myCoursesInFlight) {
+    myCoursesInFlight = api.get('/api/my/courses').finally(() => {
+      myCoursesInFlight = null
+    })
+  }
+  return myCoursesInFlight
+}
+
 function DueDateBanner({ dueDate, courseComplete }) {
   const [now, setNow] = useState(null)
   useEffect(() => {
@@ -51,7 +62,7 @@ export function TraineeDashboardPage() {
     let cancelled = false
     async function load() {
       try {
-        const { data } = await api.get('/api/my/courses')
+        const { data } = await fetchMyCoursesOnce()
         if (!cancelled) setRows(data)
       } catch (err) {
         if (!cancelled) setError(err.response?.data?.error || 'Could not load courses.')

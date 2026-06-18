@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { requireNoForcedPasswordChange } from '../middleware/mustChangePasswordMiddleware.js'
 import { getVideoSignedUrl } from '../services/storage.js'
 import { getDb } from '../utils/firestoreDb.js'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
 import { recalculateModuleProgress, recalculateCourseProgress } from '../services/progressEngine.js'
 
@@ -50,12 +51,21 @@ async function loadLessonProgressMap(db, traineeId, lessonIds) {
   const map = new Map()
   if (uniq.length === 0) return map
   const chunkSize = 10
+  const chunks = []
   for (let i = 0; i < uniq.length; i += chunkSize) {
-    const chunk = uniq.slice(i, i + chunkSize)
-    const refs = chunk.map((lid) =>
-      db.collection('lessonProgress').doc(progressDocId(traineeId, lid)),
-    )
-    const snaps = await db.getAll(...refs)
+    chunks.push(uniq.slice(i, i + chunkSize))
+  }
+  const chunkSnapshots = await Promise.all(
+    chunks.map((chunk) => {
+      const refs = chunk.map((lid) =>
+        db.collection('lessonProgress').doc(progressDocId(traineeId, lid)),
+      )
+      return db.getAll(...refs)
+    }),
+  )
+  for (let i = 0; i < chunks.length; i += 1) {
+    const chunk = chunks[i]
+    const snaps = chunkSnapshots[i]
     for (let j = 0; j < chunk.length; j += 1) {
       const doc = snaps[j]
       if (doc.exists) map.set(chunk[j], { id: doc.id, ...doc.data() })
@@ -189,19 +199,81 @@ function countCompletedLessons(lessons, progressByLessonId) {
   return n
 }
 
+async function buildLiveCourseDashboardRow(db, traineeId, enrollment, courseDoc) {
+  const courseId = enrollment.courseId
+  const [modules, allLessons] = await Promise.all([
+    loadPublishedModulesForCourse(db, courseId),
+    loadPublishedLessonsForCourse(db, courseId),
+  ])
+
+  const lessonsByModule = new Map()
+  for (const l of allLessons) {
+    const arr = lessonsByModule.get(l.moduleId) || []
+    arr.push(l)
+    lessonsByModule.set(l.moduleId, arr)
+  }
+
+  const progressByLessonId = await loadLessonProgressMap(
+    db,
+    traineeId,
+    allLessons.map((l) => l.id),
+  )
+  const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
+  const totalLessons = allLessons.length
+  let completedLessons = 0
+  for (const l of allLessons) {
+    const p = progressByLessonId.get(l.id)
+    if (isLessonCompleted(p)) completedLessons += 1
+  }
+  const weightedSum = sumLessonWeights(allLessons, progressByLessonId)
+  const courseProgressPercent =
+    totalLessons === 0 ? 0 : Math.round((weightedSum / totalLessons) * 100)
+
+  return {
+    enrollment,
+    course: serializeDoc(courseDoc),
+    courseProgressPercent,
+    completedLessons,
+    totalLessons,
+    modules: states.map((s) => {
+      const w = sumLessonWeights(
+        s.lessons.filter((l) => l.status === 'published'),
+        progressByLessonId,
+      )
+      return {
+        id: s.module.id,
+        title: s.module.title,
+        description: s.module.description,
+        order: s.module.order,
+        status: s.status,
+        unlocked: s.unlocked,
+        prerequisiteTitle: s.prerequisiteTitle,
+        lessonCount: s.lessonCount,
+        completedLessonCount: s.completedLessonCount,
+        progressPercent:
+          s.lessonCount === 0 ? 0 : Math.round((w / s.lessonCount) * 100),
+      }
+    }),
+  }
+}
+
 traineeRouter.get('/enrollments', async (req, res, next) => {
   try {
     const db = dbRequired()
     const snap = await db.collection('enrollments').where('traineeId', '==', req.user.uid).get()
-    const rows = []
-    for (const d of snap.docs) {
-      const en = serializeDoc(d)
-      const c = await db.collection('courses').doc(en.courseId).get()
-      rows.push({
+    const enrollments = snap.docs.map((d) => serializeDoc(d))
+    const courseById = await getDocSnapshotsById(
+      db,
+      'courses',
+      enrollments.map((e) => e.courseId),
+    )
+    const rows = enrollments.map((en) => {
+      const c = courseById.get(en.courseId)
+      return {
         ...en,
-        course: c.exists ? serializeDoc(c) : null,
-      })
-    }
+        course: c?.exists ? serializeDoc(c) : null,
+      }
+    })
     res.json(rows)
   } catch (e) {
     next(e)
@@ -212,64 +284,115 @@ traineeRouter.get('/courses', async (req, res, next) => {
   try {
     const db = dbRequired()
     const snap = await db.collection('enrollments').where('traineeId', '==', req.user.uid).get()
-    const out = []
-    for (const d of snap.docs) {
-      const enData = d.data()
-      if (enData.status !== 'active' && enData.status !== 'completed') continue
-      const courseDoc = await db.collection('courses').doc(enData.courseId).get()
-      if (!courseDoc.exists || courseDoc.data().status !== 'published') continue
-      const courseId = enData.courseId
-      const modules = await loadPublishedModulesForCourse(db, courseId)
-      const allLessons = await loadPublishedLessonsForCourse(db, courseId)
-      const lessonsByModule = new Map()
-      for (const l of allLessons) {
-        const arr = lessonsByModule.get(l.moduleId) || []
-        arr.push(l)
-        lessonsByModule.set(l.moduleId, arr)
-      }
-      const progressByLessonId = await loadLessonProgressMap(
-        db,
-        req.user.uid,
-        allLessons.map((l) => l.id),
-      )
-      const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
-      const totalLessons = allLessons.length
-      let completedLessons = 0
-      for (const l of allLessons) {
-        const p = progressByLessonId.get(l.id)
-        if (isLessonCompleted(p)) completedLessons += 1
-      }
-      const weightedSum = sumLessonWeights(allLessons, progressByLessonId)
-      const courseProgressPercent =
-        totalLessons === 0 ? 0 : Math.round((weightedSum / totalLessons) * 100)
-      out.push({
-        enrollment: serializeDoc(d),
-        course: serializeDoc(courseDoc),
-        courseProgressPercent,
-        completedLessons,
-        totalLessons,
-        modules: states.map((s) => {
-          const w = sumLessonWeights(
-            s.lessons.filter((l) => l.status === 'published'),
-            progressByLessonId,
-          )
-          return {
-            id: s.module.id,
-            title: s.module.title,
-            description: s.module.description,
-            order: s.module.order,
-            status: s.status,
-            unlocked: s.unlocked,
-            prerequisiteTitle: s.prerequisiteTitle,
-            lessonCount: s.lessonCount,
-            completedLessonCount: s.completedLessonCount,
-            progressPercent:
-              s.lessonCount === 0 ? 0 : Math.round((w / s.lessonCount) * 100),
-          }
-        }),
-      })
+    const enrolled = snap.docs
+      .map((d) => ({ enrollment: serializeDoc(d), data: d.data() }))
+      .filter(({ data }) => data.status === 'active' || data.status === 'completed')
+
+    const courseById = await getDocSnapshotsById(
+      db,
+      'courses',
+      enrolled.map((x) => x.data.courseId),
+    )
+
+    const visible = enrolled.filter(({ data: enData }) => {
+      const courseDoc = courseById.get(enData.courseId)
+      return courseDoc?.exists && courseDoc.data().status === 'published'
+    })
+    const uniqueCourseIds = [...new Set(visible.map((x) => x.data.courseId))]
+
+    const modulesByCourseId = new Map(
+      await Promise.all(
+        uniqueCourseIds.map(async (courseId) => [courseId, await loadPublishedModulesForCourse(db, courseId)]),
+      ),
+    )
+    const allModuleIds = []
+    for (const courseId of uniqueCourseIds) {
+      const modules = modulesByCourseId.get(courseId) || []
+      for (const mod of modules) allModuleIds.push(mod.id)
     }
-    res.json(out)
+
+    const courseProgressById = await getDocSnapshotsById(
+      db,
+      'courseProgress',
+      uniqueCourseIds.map((courseId) => `${req.user.uid}_${courseId}`),
+    )
+    const moduleProgressById = await getDocSnapshotsById(
+      db,
+      'moduleProgress',
+      allModuleIds.map((moduleId) => `${req.user.uid}_${moduleId}`),
+    )
+
+    const rows = await Promise.all(
+      visible.map(async ({ enrollment, data: enData }) => {
+        const courseId = enData.courseId
+        const courseDoc = courseById.get(courseId)
+        if (!courseDoc?.exists) return null
+
+        const modules = modulesByCourseId.get(courseId) || []
+        const cpDoc = courseProgressById.get(`${req.user.uid}_${courseId}`)
+        const cp = cpDoc?.exists ? cpDoc.data() : null
+
+        const moduleRows = modules.map((mod, i) => {
+          const mpDoc = moduleProgressById.get(`${req.user.uid}_${mod.id}`)
+          const mp = mpDoc?.exists ? mpDoc.data() : null
+          const status = mp?.status || (i === 0 ? 'in_progress' : 'locked')
+          const lessonCount = Number.isFinite(Number(mp?.totalLessons))
+            ? Number(mp.totalLessons)
+            : 0
+          const completedLessonCount = Number.isFinite(Number(mp?.completedLessons))
+            ? Number(mp.completedLessons)
+            : 0
+          const progressPercent = Number.isFinite(Number(mp?.percentComplete))
+            ? Math.max(0, Math.min(100, Math.round(Number(mp.percentComplete))))
+            : lessonCount > 0
+              ? Math.round((completedLessonCount / lessonCount) * 100)
+              : 0
+
+          return {
+            id: mod.id,
+            title: mod.title,
+            description: mod.description,
+            order: mod.order,
+            status,
+            unlocked: status !== 'locked',
+            prerequisiteTitle: i > 0 ? modules[i - 1].title : null,
+            lessonCount,
+            completedLessonCount,
+            progressPercent,
+            hasSummary: Boolean(mp),
+          }
+        })
+
+        const missingModuleSummaries = moduleRows.some((m) => !m.hasSummary)
+        const shouldFallbackToLive = !cp || (modules.length > 0 && missingModuleSummaries)
+        if (shouldFallbackToLive) {
+          return buildLiveCourseDashboardRow(db, req.user.uid, enrollment, courseDoc)
+        }
+
+        const totalLessons = Number.isFinite(Number(cp.totalLessons))
+          ? Number(cp.totalLessons)
+          : moduleRows.reduce((sum, m) => sum + m.lessonCount, 0)
+        const completedLessons = Number.isFinite(Number(cp.completedLessons))
+          ? Number(cp.completedLessons)
+          : moduleRows.reduce((sum, m) => sum + m.completedLessonCount, 0)
+        const courseProgressPercent = Number.isFinite(Number(cp.percentComplete))
+          ? Math.max(0, Math.min(100, Math.round(Number(cp.percentComplete))))
+          : totalLessons > 0
+            ? Math.round((completedLessons / totalLessons) * 100)
+            : 0
+
+        return {
+          enrollment,
+          course: serializeDoc(courseDoc),
+          courseProgressPercent,
+          completedLessons,
+          totalLessons,
+          modules: moduleRows.map(({ hasSummary, ...m }) => m),
+        }
+      }),
+    )
+
+    res.json(rows.filter(Boolean))
   } catch (e) {
     next(e)
   }
@@ -280,9 +403,11 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
     const db = dbRequired()
     const { courseId } = req.params
     await assertEnrollment(db, req.user.uid, courseId)
-    const courseDoc = await db.collection('courses').doc(courseId).get()
-    const modules = await loadPublishedModulesForCourse(db, courseId)
-    const allLessons = await loadPublishedLessonsForCourse(db, courseId)
+    const [courseDoc, modules, allLessons] = await Promise.all([
+      db.collection('courses').doc(courseId).get(),
+      loadPublishedModulesForCourse(db, courseId),
+      loadPublishedLessonsForCourse(db, courseId),
+    ])
     const lessonsByModule = new Map()
     for (const l of allLessons) {
       const arr = lessonsByModule.get(l.moduleId) || []
@@ -338,7 +463,11 @@ traineeRouter.get(
       const db = dbRequired()
       const { courseId, moduleId } = req.params
       await assertEnrollment(db, req.user.uid, courseId)
-      const modDoc = await db.collection('modules').doc(moduleId).get()
+      const [modDoc, modules, allLessons] = await Promise.all([
+        db.collection('modules').doc(moduleId).get(),
+        loadPublishedModulesForCourse(db, courseId),
+        loadPublishedLessonsForCourse(db, courseId),
+      ])
       if (!modDoc.exists || modDoc.data().courseId !== courseId) {
         const err = new Error('Module not found')
         err.status = 404
@@ -350,8 +479,6 @@ traineeRouter.get(
         err.status = 403
         throw err
       }
-      const modules = await loadPublishedModulesForCourse(db, courseId)
-      const allLessons = await loadPublishedLessonsForCourse(db, courseId)
       const lessonsByModule = new Map()
       for (const l of allLessons) {
         const arr = lessonsByModule.get(l.moduleId) || []
@@ -406,7 +533,12 @@ traineeRouter.get(
       const db = dbRequired()
       const { courseId, moduleId, lessonId } = req.params
       await assertEnrollment(db, req.user.uid, courseId)
-      const modDoc = await db.collection('modules').doc(moduleId).get()
+      const [modDoc, allLessons, modules, lessonDoc] = await Promise.all([
+        db.collection('modules').doc(moduleId).get(),
+        loadPublishedLessonsForCourse(db, courseId),
+        loadPublishedModulesForCourse(db, courseId),
+        db.collection('lessons').doc(lessonId).get(),
+      ])
       if (!modDoc.exists || modDoc.data().courseId !== courseId) {
         const err = new Error('Module not found')
         err.status = 404
@@ -417,8 +549,6 @@ traineeRouter.get(
         err.status = 403
         throw err
       }
-      const modules = await loadPublishedModulesForCourse(db, courseId)
-      const allLessons = await loadPublishedLessonsForCourse(db, courseId)
       const lessonsByModule = new Map()
       for (const l of allLessons) {
         const arr = lessonsByModule.get(l.moduleId) || []
@@ -437,7 +567,6 @@ traineeRouter.get(
         err.status = 403
         throw err
       }
-      const lessonDoc = await db.collection('lessons').doc(lessonId).get()
       if (!lessonDoc.exists || lessonDoc.data().moduleId !== moduleId) {
         const err = new Error('Lesson not found')
         err.status = 404
