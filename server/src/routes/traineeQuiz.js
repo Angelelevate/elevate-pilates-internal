@@ -18,6 +18,21 @@ function dbRequired() {
   return db
 }
 
+// Fallback expiry for in-progress attempts on quizzes that have no time limit,
+// so an abandoned attempt can't lock a trainee out forever (default: 6 hours).
+const UNTIMED_STALE_MS = 6 * 60 * 60 * 1000
+// Grace beyond the timer to tolerate clock skew / slow submits before we expire.
+const TIMED_GRACE_MS = 2 * 60 * 1000
+
+function isAttemptStale(attempt, quiz) {
+  const startedAt = attempt.startedAt?.toDate?.() || (attempt.startedAt ? new Date(attempt.startedAt) : null)
+  if (!startedAt) return true // no start timestamp — treat as stale/orphaned
+  const ageMs = Date.now() - startedAt.getTime()
+  const limitMin = attempt.timeLimitMinutes || quiz.timeLimitMinutes || null
+  if (limitMin) return ageMs > limitMin * 60000 + TIMED_GRACE_MS
+  return ageMs > UNTIMED_STALE_MS
+}
+
 // Start a new attempt
 traineeQuizRouter.post('/quizzes/:quizId/attempts', async (req, res, next) => {
   try {
@@ -37,13 +52,33 @@ traineeQuizRouter.post('/quizzes/:quizId/attempts', async (req, res, next) => {
         .where('quizId', '==', quizId)
         .where('traineeId', '==', traineeId)
         .get()
-      const existing = existingSnap.docs.map((d) => d.data())
+      const existing = existingSnap.docs.map((d) => ({ id: d.id, ref: d.ref, ...d.data() }))
+
+      // Expire any stale in-progress attempts before evaluating the lock. Without
+      // this, an attempt abandoned mid-quiz (tab closed, device switched, connection
+      // dropped) leaves the trainee permanently unable to start a new one, since
+      // nothing else ever transitions it out of `in_progress`.
+      for (const a of existing.filter((x) => x.status === 'in_progress')) {
+        if (isAttemptStale(a, quiz)) {
+          await a.ref.update({
+            status: 'timed_out',
+            score: 0,
+            pointsEarned: 0,
+            totalPoints: quiz.totalPoints || 0,
+            passed: false,
+            submittedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          })
+          a.status = 'timed_out'
+        }
+      }
+
       const submitted = existing.filter((a) => a.status === 'submitted' || a.status === 'timed_out')
       if (submitted.length >= 3) {
         const err = new Error('Maximum attempts reached. Contact your admin.')
         err.status = 403; throw err
       }
-      // Also check for in-progress attempts
+      // Block only if a genuinely active (non-stale) attempt is still running
       const inProgress = existing.find((a) => a.status === 'in_progress')
       if (inProgress) {
         const err = new Error('You already have an attempt in progress')

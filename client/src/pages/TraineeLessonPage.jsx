@@ -249,8 +249,11 @@ function ReadingPane({ lessonId, body, onDone, alreadyComplete, onNavLockChange 
       setMarkedThisSession(true)
       await onDone()
       showToast({ variant: 'success', message: 'Nice work — lesson marked complete.' })
-    } catch {
-      showToast({ variant: 'error', message: 'Could not save progress. Try again.' })
+    } catch (err) {
+      showToast({
+        variant: 'error',
+        message: err.response?.data?.error || 'Could not save progress. Try again.',
+      })
     } finally {
       setMarking(false)
       onNavLockChange?.(false)

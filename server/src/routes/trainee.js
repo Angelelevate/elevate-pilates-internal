@@ -30,18 +30,30 @@ function progressDocId(traineeId, lessonId) {
   return `${traineeId}_${lessonId}`
 }
 
-async function loadPublishedLessonsForCourse(db, courseId) {
+/**
+ * Content reachable by an ALREADY-ENROLLED trainee. Unpublishing a course cascades
+ * `draft` down the whole course/module/lesson tree (see setCourseTreeStatus), so if
+ * we gated trainees on `status === 'published'` an admin unpublishing a course to edit
+ * it would instantly 403 every enrolled trainee and appear to wipe their progress.
+ * Only `archived` (soft-deleted) content is truly hidden from enrolled trainees.
+ * New enrollments / the course catalog remain gated on `published` elsewhere.
+ */
+function isTraineeAccessible(status) {
+  return status !== 'archived'
+}
+
+async function loadAccessibleLessonsForCourse(db, courseId) {
   const snap = await db.collection('lessons').where('courseId', '==', courseId).get()
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => l.status === 'published')
+    .filter((l) => isTraineeAccessible(l.status))
 }
 
-async function loadPublishedModulesForCourse(db, courseId) {
+async function loadAccessibleModulesForCourse(db, courseId) {
   const snap = await db.collection('modules').where('courseId', '==', courseId).get()
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((m) => m.status === 'published')
+    .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 }
 
@@ -114,9 +126,9 @@ function sumLessonWeights(lessons, progressByLessonId) {
 function moduleCompletionState(mod, lessons, progressByLessonId) {
   const criteria = mod.completionCriteria || {}
   const needExam = Boolean(criteria.examPassed)
-  const publishedLessons = lessons.filter((l) => l.status === 'published')
+  const accessibleLessons = lessons.filter((l) => isTraineeAccessible(l.status))
   let allDone = true
-  for (const l of publishedLessons) {
+  for (const l of accessibleLessons) {
     const p = progressByLessonId.get(l.id) ?? null
     if (!isLessonCompleted(p)) {
       allDone = false
@@ -125,7 +137,7 @@ function moduleCompletionState(mod, lessons, progressByLessonId) {
   }
   let examOk = true
   if (needExam) {
-    const examLesson = publishedLessons.find((l) => l.type === 'exam')
+    const examLesson = accessibleLessons.find((l) => l.type === 'exam')
     if (examLesson) {
       const p = progressByLessonId.get(examLesson.id) ?? null
       examOk = isLessonCompleted(p)
@@ -153,7 +165,7 @@ async function assertEnrollment(db, traineeId, courseId) {
     throw err
   }
   const course = await db.collection('courses').doc(courseId).get()
-  if (!course.exists || course.data().status !== 'published') {
+  if (!course.exists || !isTraineeAccessible(course.data().status)) {
     const err = new Error('Course is not available')
     err.status = 403
     throw err
@@ -180,7 +192,7 @@ function computeModuleUnlock(modules, lessonsByModuleId, progressByLessonId) {
       unlocked,
       status: unlocked ? (completed ? 'completed' : status) : 'locked',
       completedLessonCount: countCompletedLessons(lessons, progressByLessonId),
-      lessonCount: lessons.filter((l) => l.status === 'published').length,
+      lessonCount: lessons.filter((l) => isTraineeAccessible(l.status)).length,
       runtimeCompleted,
       prerequisiteTitle: i > 0 ? modules[i - 1].title : null,
       allDone,
@@ -192,7 +204,7 @@ function computeModuleUnlock(modules, lessonsByModuleId, progressByLessonId) {
 
 function countCompletedLessons(lessons, progressByLessonId) {
   let n = 0
-  for (const l of lessons.filter((x) => x.status === 'published')) {
+  for (const l of lessons.filter((x) => isTraineeAccessible(x.status))) {
     const p = progressByLessonId.get(l.id) ?? null
     if (isLessonCompleted(p)) n += 1
   }
@@ -202,8 +214,8 @@ function countCompletedLessons(lessons, progressByLessonId) {
 async function buildLiveCourseDashboardRow(db, traineeId, enrollment, courseDoc) {
   const courseId = enrollment.courseId
   const [modules, allLessons] = await Promise.all([
-    loadPublishedModulesForCourse(db, courseId),
-    loadPublishedLessonsForCourse(db, courseId),
+    loadAccessibleModulesForCourse(db, courseId),
+    loadAccessibleLessonsForCourse(db, courseId),
   ])
 
   const lessonsByModule = new Map()
@@ -237,7 +249,7 @@ async function buildLiveCourseDashboardRow(db, traineeId, enrollment, courseDoc)
     totalLessons,
     modules: states.map((s) => {
       const w = sumLessonWeights(
-        s.lessons.filter((l) => l.status === 'published'),
+        s.lessons.filter((l) => isTraineeAccessible(l.status)),
         progressByLessonId,
       )
       return {
@@ -296,13 +308,13 @@ traineeRouter.get('/courses', async (req, res, next) => {
 
     const visible = enrolled.filter(({ data: enData }) => {
       const courseDoc = courseById.get(enData.courseId)
-      return courseDoc?.exists && courseDoc.data().status === 'published'
+      return courseDoc?.exists && isTraineeAccessible(courseDoc.data().status)
     })
     const uniqueCourseIds = [...new Set(visible.map((x) => x.data.courseId))]
 
     const modulesByCourseId = new Map(
       await Promise.all(
-        uniqueCourseIds.map(async (courseId) => [courseId, await loadPublishedModulesForCourse(db, courseId)]),
+        uniqueCourseIds.map(async (courseId) => [courseId, await loadAccessibleModulesForCourse(db, courseId)]),
       ),
     )
     const allModuleIds = []
@@ -405,8 +417,8 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
     await assertEnrollment(db, req.user.uid, courseId)
     const [courseDoc, modules, allLessons] = await Promise.all([
       db.collection('courses').doc(courseId).get(),
-      loadPublishedModulesForCourse(db, courseId),
-      loadPublishedLessonsForCourse(db, courseId),
+      loadAccessibleModulesForCourse(db, courseId),
+      loadAccessibleLessonsForCourse(db, courseId),
     ])
     const lessonsByModule = new Map()
     for (const l of allLessons) {
@@ -433,7 +445,7 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
         totalLessons === 0 ? 0 : Math.round((weightedSum / totalLessons) * 100),
       modules: states.map((s) => {
         const w = sumLessonWeights(
-          s.lessons.filter((l) => l.status === 'published'),
+          s.lessons.filter((l) => isTraineeAccessible(l.status)),
           progressByLessonId,
         )
         return {
@@ -465,8 +477,8 @@ traineeRouter.get(
       await assertEnrollment(db, req.user.uid, courseId)
       const [modDoc, modules, allLessons] = await Promise.all([
         db.collection('modules').doc(moduleId).get(),
-        loadPublishedModulesForCourse(db, courseId),
-        loadPublishedLessonsForCourse(db, courseId),
+        loadAccessibleModulesForCourse(db, courseId),
+        loadAccessibleLessonsForCourse(db, courseId),
       ])
       if (!modDoc.exists || modDoc.data().courseId !== courseId) {
         const err = new Error('Module not found')
@@ -474,7 +486,7 @@ traineeRouter.get(
         throw err
       }
       const mod = { id: modDoc.id, ...modDoc.data() }
-      if (mod.status !== 'published') {
+      if (!isTraineeAccessible(mod.status)) {
         const err = new Error('Module is not available')
         err.status = 403
         throw err
@@ -498,7 +510,7 @@ traineeRouter.get(
         throw err
       }
       const lessons = (lessonsByModule.get(moduleId) || [])
-        .filter((l) => l.status === 'published')
+        .filter((l) => isTraineeAccessible(l.status))
         .sort((a, b) => (a.order || 0) - (b.order || 0))
       const lessonRows = []
       for (const l of lessons) {
@@ -535,8 +547,8 @@ traineeRouter.get(
       await assertEnrollment(db, req.user.uid, courseId)
       const [modDoc, allLessons, modules, lessonDoc] = await Promise.all([
         db.collection('modules').doc(moduleId).get(),
-        loadPublishedLessonsForCourse(db, courseId),
-        loadPublishedModulesForCourse(db, courseId),
+        loadAccessibleLessonsForCourse(db, courseId),
+        loadAccessibleModulesForCourse(db, courseId),
         db.collection('lessons').doc(lessonId).get(),
       ])
       if (!modDoc.exists || modDoc.data().courseId !== courseId) {
@@ -544,7 +556,7 @@ traineeRouter.get(
         err.status = 404
         throw err
       }
-      if (modDoc.data().status !== 'published') {
+      if (!isTraineeAccessible(modDoc.data().status)) {
         const err = new Error('Module is not available')
         err.status = 403
         throw err
@@ -572,7 +584,7 @@ traineeRouter.get(
         err.status = 404
         throw err
       }
-      if (lessonDoc.data().status !== 'published') {
+      if (!isTraineeAccessible(lessonDoc.data().status)) {
         const err = new Error('Lesson is not available')
         err.status = 403
         throw err
@@ -601,7 +613,7 @@ traineeRouter.post(
       const lesson = lessonDoc.data()
       const { courseId } = lesson
       await assertEnrollment(db, req.user.uid, courseId)
-      if (lesson.status !== 'published') {
+      if (!isTraineeAccessible(lesson.status)) {
         const err = new Error('Lesson is not available')
         err.status = 403
         throw err
@@ -668,7 +680,7 @@ traineeRouter.post(
       }
       const { courseId } = lesson
       await assertEnrollment(db, req.user.uid, courseId)
-      if (lesson.status !== 'published') {
+      if (!isTraineeAccessible(lesson.status)) {
         const err = new Error('Lesson is not available')
         err.status = 403
         throw err
@@ -728,7 +740,7 @@ traineeRouter.get('/progress/courses/:courseId', async (req, res, next) => {
     const db = dbRequired()
     const { courseId } = req.params
     await assertEnrollment(db, req.user.uid, courseId)
-    const lessons = await loadPublishedLessonsForCourse(db, courseId)
+    const lessons = await loadAccessibleLessonsForCourse(db, courseId)
     const progressByLessonId = await loadLessonProgressMap(
       db,
       req.user.uid,
@@ -761,7 +773,7 @@ traineeRouter.get('/lessons/:lessonId/video-url', async (req, res, next) => {
       throw err
     }
     await assertEnrollment(db, req.user.uid, lesson.courseId)
-    if (lesson.status !== 'published') {
+    if (!isTraineeAccessible(lesson.status)) {
       const err = new Error('Lesson is not available')
       err.status = 403
       throw err
