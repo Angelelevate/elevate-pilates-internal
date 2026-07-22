@@ -5,19 +5,29 @@ function progressDocId(traineeId, id) {
 }
 
 /**
+ * Content that counts toward an enrolled trainee's progress. Unpublishing a course
+ * cascades `draft` across its whole tree, so progress must be computed over all
+ * non-archived content — otherwise recalculating an unpublished course would zero
+ * out a trainee's completion counts. Only `archived` (soft-deleted) content is excluded.
+ */
+function isTraineeAccessible(status) {
+  return status !== 'archived'
+}
+
+/**
  * Initialize courseProgress + moduleProgress when a trainee is enrolled.
  */
 export async function initializeProgress(db, traineeId, courseId) {
   const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
   const modules = modSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((m) => m.status === 'published')
+    .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
   const lessonSnap = await db.collection('lessons').where('courseId', '==', courseId).get()
   const lessons = lessonSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => l.status === 'published')
+    .filter((l) => isTraineeAccessible(l.status))
 
   const totalLessons = lessons.length
   const totalModules = modules.length
@@ -80,7 +90,7 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
   const lessonSnap = await db.collection('lessons').where('moduleId', '==', moduleId).get()
   const lessons = lessonSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => l.status === 'published')
+    .filter((l) => isTraineeAccessible(l.status))
 
   // Load lesson progress
   let completedLessons = 0
@@ -159,7 +169,7 @@ export async function evaluateCascadingUnlock(db, traineeId, courseId, completed
   const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
   const modules = modSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((m) => m.status === 'published')
+    .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
   const nextMod = modules.find((m) => (m.order || 0) > completedModuleOrder)
@@ -175,7 +185,7 @@ export async function evaluateCascadingUnlock(db, traineeId, courseId, completed
     })
   } else if (!mpDoc.exists) {
     const lessonSnap = await db.collection('lessons').where('moduleId', '==', nextMod.id).get()
-    const lCount = lessonSnap.docs.filter((d) => d.data().status === 'published').length
+    const lCount = lessonSnap.docs.filter((d) => isTraineeAccessible(d.data().status)).length
     await mpRef.set({
       moduleId: nextMod.id,
       courseId,
@@ -201,13 +211,13 @@ export async function recalculateCourseProgress(db, traineeId, courseId) {
   const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
   const modules = modSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((m) => m.status === 'published')
+    .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
   const lessonSnap = await db.collection('lessons').where('courseId', '==', courseId).get()
   const allLessons = lessonSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => l.status === 'published')
+    .filter((l) => isTraineeAccessible(l.status))
 
   let completedLessons = 0
   for (const l of allLessons) {

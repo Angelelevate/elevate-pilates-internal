@@ -235,8 +235,8 @@ export function QuizRenderer({ quizId, lessonId, moduleId, courseId, quizType, o
             </div>
           )}
           {quizType === 'quiz' && (
-            <button type="button" onClick={() => loadHistory()} className="mt-3 text-sm font-semibold text-deep hover:underline">
-              Retake Quiz
+            <button type="button" onClick={startAttempt} disabled={starting} className="mt-3 text-sm font-semibold text-deep hover:underline disabled:opacity-40">
+              {starting ? 'Starting…' : 'Retake Quiz'}
             </button>
           )}
         </div>

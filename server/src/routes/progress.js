@@ -57,7 +57,8 @@ traineeProgressRouter.get('/modules/:moduleId', async (req, res, next) => {
     const lessonSnap = await db.collection('lessons').where('moduleId', '==', req.params.moduleId).get()
     const lessons = lessonSnap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
-      .filter((l) => l.status === 'published')
+      // Enrolled trainees keep access to non-archived (incl. unpublished) content
+      .filter((l) => l.status !== 'archived')
       .sort((a, b) => (a.order || 0) - (b.order || 0))
 
     const progressById = await getDocSnapshotsById(
