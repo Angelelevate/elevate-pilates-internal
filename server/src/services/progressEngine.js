@@ -103,12 +103,22 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
   const allLessonsCompleted = totalLessons > 0 && completedLessons === totalLessons
   const percentComplete = totalLessons === 0 ? 0 : Math.round((completedLessons / totalLessons) * 100)
 
-  // Check exam pass status
+  // Check exam pass status. Only *real* exams (an exam-type lesson whose linked quiz
+  // is itself type 'exam') gate module completion on a passing attempt — this is what
+  // lets an admin attempt-reset correctly revert a completed module (Module 6 §6.7).
+  //
+  // An exam-type lesson linked to a knowledge-check quiz (quiz.type !== 'exam') has no
+  // pass/fail concept: submitting it always completes the lesson and records an attempt
+  // with passed=null. Requiring passed===true there would leave the module permanently
+  // 'in_progress' even at 100% lessons complete, wrongly locking the next module. Such
+  // lessons are already accounted for by allLessonsCompleted, so we don't re-gate them.
   let examPassed = true
   const examLessons = lessons.filter((l) => l.type === 'exam')
   for (const el of examLessons) {
     const quizId = el.content?.quizId
-    if (!quizId) { examPassed = false; continue }
+    if (!quizId) continue // no linked quiz; rely on lesson completion
+    const quizDoc = await db.collection('quizzes').doc(quizId).get()
+    if (!quizDoc.exists || quizDoc.data().type !== 'exam') continue // not a graded exam
     const attSnap = await db.collection('quizAttempts')
       .where('quizId', '==', quizId)
       .where('traineeId', '==', traineeId)
@@ -116,7 +126,6 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
     const hasPassing = attSnap.docs.some((d) => d.data().passed === true)
     if (!hasPassing) examPassed = false
   }
-  if (examLessons.length === 0) examPassed = true
 
   const completed = allLessonsCompleted && examPassed
 
@@ -294,4 +303,57 @@ export async function recalculateCourseProgress(db, traineeId, courseId) {
   }
 
   return { courseCompleted, percentComplete }
+}
+
+/**
+ * Repair modules stuck at 100% lessons but still `in_progress` (and unlock the next
+ * module). This recovers trainees hit by the historical exam-gate bug: knowledge-check
+ * quizzes store `passed: null`, so requiring `passed === true` for every exam-typed
+ * lesson left modules permanently incomplete even when every lesson was done.
+ *
+ * Safe to call on dashboard / course / module reads — only recalculates candidates.
+ * Pass `forceModuleIds` when the live unlock engine already knows a module is complete
+ * but the cache may disagree (e.g. completedLessons count is stale).
+ */
+export async function healStuckModules(db, traineeId, courseId, forceModuleIds = []) {
+  const force = new Set(forceModuleIds.filter(Boolean))
+  const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
+  const modules = modSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((m) => isTraineeAccessible(m.status))
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+
+  let healed = false
+  for (const mod of modules) {
+    const mpRef = db.collection('moduleProgress').doc(progressDocId(traineeId, mod.id))
+    const mpDoc = await mpRef.get()
+    if (!mpDoc.exists) {
+      // No cache yet — if live says this module is done, create/update via recalculate.
+      if (force.has(mod.id)) {
+        const result = await recalculateModuleProgress(db, traineeId, mod.id)
+        if (result?.completed) healed = true
+      }
+      continue
+    }
+    const mp = mpDoc.data()
+    if (mp.status === 'locked' || mp.status === 'completed') continue
+
+    const total = Number(mp.totalLessons) || 0
+    const done = Number(mp.completedLessons) || 0
+    const looksComplete =
+      force.has(mod.id) ||
+      Boolean(mp.allLessonsCompleted) ||
+      (total > 0 && done >= total)
+
+    // Only re-evaluate modules that appear finished by lesson count — these are
+    // the stuck-at-100% cases. Don't touch modules still mid-work (examPassed
+    // defaults to false at enrollment, so that alone is not a signal).
+    if (!looksComplete) continue
+
+    const result = await recalculateModuleProgress(db, traineeId, mod.id)
+    if (result?.completed) healed = true
+  }
+
+  if (healed) await recalculateCourseProgress(db, traineeId, courseId)
+  return healed
 }
