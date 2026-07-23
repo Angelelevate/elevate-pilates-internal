@@ -6,7 +6,11 @@ import { getVideoSignedUrl } from '../services/storage.js'
 import { getDb } from '../utils/firestoreDb.js'
 import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
-import { recalculateModuleProgress, recalculateCourseProgress } from '../services/progressEngine.js'
+import {
+  recalculateModuleProgress,
+  recalculateCourseProgress,
+  healStuckModules,
+} from '../services/progressEngine.js'
 
 export const traineeRouter = Router()
 
@@ -323,6 +327,18 @@ traineeRouter.get('/courses', async (req, res, next) => {
       for (const mod of modules) allModuleIds.push(mod.id)
     }
 
+    // Heal modules stuck at 100% lessons / still in_progress (exam-gate bug) so the
+    // dashboard unlock state matches reality before we read the cached summaries.
+    await Promise.all(
+      uniqueCourseIds.map(async (courseId) => {
+        try {
+          await healStuckModules(db, req.user.uid, courseId)
+        } catch (healErr) {
+          console.warn('[progress] Dashboard heal failed for', courseId, healErr?.message)
+        }
+      }),
+    )
+
     const courseProgressById = await getDocSnapshotsById(
       db,
       'courseProgress',
@@ -432,6 +448,14 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
       allLessons.map((l) => l.id),
     )
     const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
+    try {
+      const forceIds = states.filter((s) => s.runtimeCompleted).map((s) => s.module.id)
+      await healStuckModules(db, req.user.uid, courseId, forceIds)
+    } catch (healErr) {
+      console.warn('[progress] Course heal failed for', courseId, healErr?.message)
+    }
+    // Recompute after heal so unlock status reflects any cascading unlocks.
+    const statesAfter = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
     const totalLessons = allLessons.length
     let completedLessons = 0
     for (const l of allLessons) {
@@ -443,7 +467,7 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
       course: serializeDoc(courseDoc),
       courseProgressPercent:
         totalLessons === 0 ? 0 : Math.round((weightedSum / totalLessons) * 100),
-      modules: states.map((s) => {
+      modules: statesAfter.map((s) => {
         const w = sumLessonWeights(
           s.lessons.filter((l) => isTraineeAccessible(l.status)),
           progressByLessonId,
@@ -509,6 +533,16 @@ traineeRouter.get(
         err.status = 403
         throw err
       }
+
+      // Self-heal stale progression caches (modules stuck at 100% / in_progress
+      // from the historical exam-gate bug) before returning unlock state.
+      try {
+        const forceIds = states.filter((s) => s.runtimeCompleted).map((s) => s.module.id)
+        await healStuckModules(db, req.user.uid, courseId, forceIds)
+      } catch {
+        // Non-fatal: healing is best-effort and must never block reading the module.
+      }
+
       const lessons = (lessonsByModule.get(moduleId) || [])
         .filter((l) => isTraineeAccessible(l.status))
         .sort((a, b) => (a.order || 0) - (b.order || 0))
@@ -526,12 +560,17 @@ traineeRouter.get(
         })
       }
       const firstIncomplete = lessonRows.find((r) => r.status !== 'completed')
+      // Recompute unlock after heal so this response reflects the unlocked next module
+      // if Module N just flipped to completed.
+      const statesAfterHeal = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
+      const stateAfter = statesAfterHeal.find((s) => s.module.id === moduleId) || state
       res.json({
         module: serializeDoc(modDoc),
-        moduleStatus: state.status,
+        moduleStatus: stateAfter.status,
         lessons: lessonRows,
         continueLessonId: firstIncomplete?.id ?? lessonRows[0]?.id ?? null,
       })
+      return
     } catch (e) {
       next(e)
     }
