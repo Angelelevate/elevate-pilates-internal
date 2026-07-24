@@ -92,6 +92,11 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((l) => isTraineeAccessible(l.status))
 
+  // Backfill lessonProgress for assessment lessons that were passed/submitted but never
+  // marked complete (e.g. attempt.lessonId was null, or exam passMark was missing so
+  // passed stayed null). Without this, modules sit at N-1 lessons forever.
+  await backfillAssessmentLessonProgress(db, traineeId, lessons)
+
   // Load lesson progress
   let completedLessons = 0
   for (const l of lessons) {
@@ -119,11 +124,22 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
     if (!quizId) continue // no linked quiz; rely on lesson completion
     const quizDoc = await db.collection('quizzes').doc(quizId).get()
     if (!quizDoc.exists || quizDoc.data().type !== 'exam') continue // not a graded exam
+    const quiz = quizDoc.data()
+    const passMark = Number(quiz.passMark) || 70
     const attSnap = await db.collection('quizAttempts')
       .where('quizId', '==', quizId)
       .where('traineeId', '==', traineeId)
       .get()
-    const hasPassing = attSnap.docs.some((d) => d.data().passed === true)
+    const hasPassing = attSnap.docs.some((d) => {
+      const a = d.data()
+      if (a.passed === true) return true
+      // Legacy attempts: score met the bar but passed was left null (missing passMark).
+      if (a.status === 'submitted' || a.status === 'timed_out') {
+        const score = Number(a.score)
+        return Number.isFinite(score) && score >= passMark
+      }
+      return false
+    })
     if (!hasPassing) examPassed = false
   }
 
@@ -169,6 +185,61 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
   }
 
   return { completed, moduleId }
+}
+
+/**
+ * Write missing lessonProgress for quiz/exam lessons when the trainee already has a
+ * qualifying submitted attempt. Repairs stuck modules (e.g. 44/45 with a passed exam).
+ */
+async function backfillAssessmentLessonProgress(db, traineeId, lessons) {
+  for (const l of lessons) {
+    if (l.type !== 'quiz' && l.type !== 'exam') continue
+    const quizId = l.content?.quizId
+    if (!quizId) continue
+
+    const progressRef = db.collection('lessonProgress').doc(progressDocId(traineeId, l.id))
+    const progressDoc = await progressRef.get()
+    if (progressDoc.exists && progressDoc.data().status === 'completed') continue
+
+    const quizDoc = await db.collection('quizzes').doc(quizId).get()
+    if (!quizDoc.exists) continue
+    const quiz = quizDoc.data()
+
+    const attSnap = await db.collection('quizAttempts')
+      .where('quizId', '==', quizId)
+      .where('traineeId', '==', traineeId)
+      .get()
+    if (attSnap.empty) continue
+
+    const passMark = quiz.type === 'exam' ? (Number(quiz.passMark) || 70) : null
+    const qualifying = attSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((a) => a.status === 'submitted' || a.status === 'timed_out')
+      .filter((a) => {
+        if (quiz.type === 'quiz') return true // any submitted knowledge-check completes the lesson
+        if (a.passed === true) return true
+        const score = Number(a.score)
+        return Number.isFinite(score) && passMark != null && score >= passMark
+      })
+      .sort((a, b) => (b.attemptNumber || 0) - (a.attemptNumber || 0))
+
+    const best = qualifying[0]
+    if (!best) continue
+
+    await progressRef.set({
+      lessonId: l.id,
+      moduleId: l.moduleId,
+      courseId: l.courseId,
+      traineeId,
+      status: 'completed',
+      lessonType: quiz.type || l.type,
+      score: best.score ?? null,
+      attemptCount: best.attemptNumber || qualifying.length,
+      completedAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+  }
 }
 
 /**
@@ -340,14 +411,16 @@ export async function healStuckModules(db, traineeId, courseId, forceModuleIds =
 
     const total = Number(mp.totalLessons) || 0
     const done = Number(mp.completedLessons) || 0
+    // Also re-evaluate "one short" modules — typical stuck exam-lesson case (e.g. 44/45)
+    // where a passing attempt exists but lessonProgress was never written.
     const looksComplete =
       force.has(mod.id) ||
       Boolean(mp.allLessonsCompleted) ||
-      (total > 0 && done >= total)
+      (total > 0 && done >= total) ||
+      (total > 0 && done >= total - 1)
 
-    // Only re-evaluate modules that appear finished by lesson count — these are
-    // the stuck-at-100% cases. Don't touch modules still mid-work (examPassed
-    // defaults to false at enrollment, so that alone is not a signal).
+    // Only re-evaluate modules that look finished or nearly finished. Don't touch
+    // modules still mid-work (examPassed defaults to false at enrollment).
     if (!looksComplete) continue
 
     const result = await recalculateModuleProgress(db, traineeId, mod.id)

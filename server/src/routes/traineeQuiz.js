@@ -209,17 +209,46 @@ traineeQuizRouter.post('/attempts/:attemptId/submit', async (req, res, next) => 
     const qSnap = await db.collection('questions').where('quizId', '==', attempt.quizId).get()
     const questions = qSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
 
+    // Exams always use a pass mark (default 70). A null passMark would leave
+    // passed=null even on a high score, so the exam lesson never completes.
+    const passMark = quiz.type === 'exam' ? (Number(quiz.passMark) || 70) : null
     const { answers, pointsEarned, totalPoints, score, passed } = gradeAttempt(
       questions,
       submittedAnswers,
-      quiz.type === 'exam' ? quiz.passMark : null,
+      passMark,
     )
 
     const startedAt = attempt.startedAt?.toDate?.() || attempt.startedAt
     const now = new Date()
     const durationSeconds = startedAt ? Math.round((now - new Date(startedAt)) / 1000) : null
 
-    await ref.update({
+    // Resolve lesson context if the attempt was started without it (legacy / bad client).
+    let lessonId = attempt.lessonId || null
+    let moduleId = attempt.moduleId || null
+    let courseId = attempt.courseId || quiz.courseId || null
+    if (!lessonId && attempt.quizId) {
+      let linked = null
+      if (courseId) {
+        const lessonSnap = await db.collection('lessons').where('courseId', '==', courseId).get()
+        linked = lessonSnap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .find((l) => l.content?.quizId === attempt.quizId && (l.type === 'quiz' || l.type === 'exam'))
+      }
+      if (!linked) {
+        // Last resort: scan recent lessons (quizzes are few; this only runs when lessonId was missing).
+        const broad = await db.collection('lessons').limit(1000).get()
+        linked = broad.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .find((l) => l.content?.quizId === attempt.quizId && (l.type === 'quiz' || l.type === 'exam'))
+      }
+      if (linked) {
+        lessonId = linked.id
+        moduleId = moduleId || linked.moduleId || null
+        courseId = courseId || linked.courseId || null
+      }
+    }
+
+    const attemptPatch = {
       status: 'submitted',
       answers,
       score,
@@ -229,18 +258,21 @@ traineeQuizRouter.post('/attempts/:attemptId/submit', async (req, res, next) => 
       submittedAt: FieldValue.serverTimestamp(),
       durationSeconds,
       updatedAt: FieldValue.serverTimestamp(),
-    })
+    }
+    if (lessonId && lessonId !== attempt.lessonId) attemptPatch.lessonId = lessonId
+    if (moduleId && moduleId !== attempt.moduleId) attemptPatch.moduleId = moduleId
+    if (courseId && courseId !== attempt.courseId) attemptPatch.courseId = courseId
+    await ref.update(attemptPatch)
 
     // Mark lesson as completed for quizzes (always) or exams (only on pass)
-    const lessonId = attempt.lessonId
     if (lessonId) {
       const shouldComplete = quiz.type === 'quiz' || (quiz.type === 'exam' && passed)
       if (shouldComplete) {
         const progressId = `${req.user.uid}_${lessonId}`
         await db.collection('lessonProgress').doc(progressId).set({
           lessonId,
-          moduleId: attempt.moduleId,
-          courseId: attempt.courseId,
+          moduleId,
+          courseId,
           traineeId: req.user.uid,
           status: 'completed',
           lessonType: quiz.type,
@@ -255,11 +287,11 @@ traineeQuizRouter.post('/attempts/:attemptId/submit', async (req, res, next) => 
       // Trigger progress recalculation (Module 6)
       try {
         const { recalculateModuleProgress, recalculateCourseProgress } = await import('../services/progressEngine.js')
-        if (attempt.moduleId) {
-          await recalculateModuleProgress(db, req.user.uid, attempt.moduleId)
+        if (moduleId) {
+          await recalculateModuleProgress(db, req.user.uid, moduleId)
         }
-        if (attempt.courseId) {
-          await recalculateCourseProgress(db, req.user.uid, attempt.courseId)
+        if (courseId) {
+          await recalculateCourseProgress(db, req.user.uid, courseId)
         }
       } catch {
         // Progress engine may not be ready yet; non-fatal
