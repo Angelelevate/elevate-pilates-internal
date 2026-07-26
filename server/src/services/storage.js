@@ -92,9 +92,12 @@ export async function deleteStoragePrefix(prefix) {
 export async function getVideoSignedUrl(storagePath, expiresMs = DEFAULT_TTL_MS) {
   if (!getFirebaseAdmin()) throw new Error('Firebase Admin is not configured')
   const bucket = admin.storage().bucket()
+  // Cap at 7 days — GCS v4 signed URL maximum.
+  const ttl = Math.min(expiresMs, DEFAULT_TTL_MS)
   const [url] = await bucket.file(storagePath).getSignedUrl({
+    version: 'v4',
     action: 'read',
-    expires: Date.now() + expiresMs,
+    expires: Date.now() + ttl,
   })
   return url
 }

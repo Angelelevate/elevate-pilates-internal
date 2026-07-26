@@ -629,6 +629,20 @@ traineeRouter.get(
         throw err
       }
       const lesson = serializeDoc(lessonDoc)
+      // Always mint a fresh signed URL for playback. Stored content.downloadUrl is a
+      // time-limited GCS signature (max ~7 days) and must not be used as the durable source.
+      if (lesson.type === 'video' && lesson.content?.storagePath) {
+        try {
+          const downloadUrl = await getVideoSignedUrl(lesson.content.storagePath)
+          lesson.content = { ...lesson.content, downloadUrl }
+        } catch (signErr) {
+          console.warn('[video] Failed to sign playback URL for lesson', lessonId, signErr?.message)
+          // Leave storagePath; client can still hit /video-url as a fallback.
+          if (lesson.content) {
+            lesson.content = { ...lesson.content, downloadUrl: null }
+          }
+        }
+      }
       const progress = progressByLessonId.get(lessonId) ?? null
       res.json({ lesson, progress })
     } catch (e) {

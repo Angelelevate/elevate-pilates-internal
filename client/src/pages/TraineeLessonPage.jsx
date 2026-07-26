@@ -293,24 +293,48 @@ function VideoPane({
   onRefresh,
 }) {
   const videoRef = useRef(null)
-  const [url, setUrl] = useState(initialUrl)
+  const [url, setUrl] = useState(initialUrl || null)
   const [msg, setMsg] = useState('')
   const lastSent = useRef(0)
   const restoredPosition = useRef(false)
   const nearEndSent = useRef(false)
   const wasCompletedRef = useRef(false)
+  const refreshAttempts = useRef(0)
   const [celebrate, setCelebrate] = useState(false)
-
-  useEffect(() => {
-    setUrl(initialUrl)
-    restoredPosition.current = false
-    nearEndSent.current = false
-    lastSent.current = 0
-  }, [lessonId, initialUrl])
 
   useEffect(() => {
     wasCompletedRef.current = progress?.status === 'completed'
   }, [progress?.status])
+
+  // Prefer a freshly signed URL from the API. Stored lesson.downloadUrl expires (~7 days).
+  useEffect(() => {
+    let cancelled = false
+    restoredPosition.current = false
+    nearEndSent.current = false
+    lastSent.current = 0
+    refreshAttempts.current = 0
+    setMsg('')
+
+    async function loadUrl() {
+      if (storagePath) {
+        try {
+          const { data } = await api.get(`/api/my/lessons/${lessonId}/video-url`)
+          if (!cancelled) {
+            setUrl(data.downloadUrl)
+            return
+          }
+        } catch {
+          // Fall back to whatever the lesson payload provided.
+        }
+      }
+      if (!cancelled) setUrl(initialUrl || null)
+    }
+
+    void loadUrl()
+    return () => {
+      cancelled = true
+    }
+  }, [lessonId, storagePath, initialUrl])
 
   function getDuration(el) {
     if (!el) return 0
@@ -339,7 +363,12 @@ function VideoPane({
     restoredPosition.current = true
   }
 
-  async function refreshUrl() {
+  async function refreshUrl({ automatic = false } = {}) {
+    if (automatic && refreshAttempts.current >= 2) {
+      setMsg('Video failed to load. Tap Retry or reload the page.')
+      return
+    }
+    if (automatic) refreshAttempts.current += 1
     try {
       const { data } = await api.get(`/api/my/lessons/${lessonId}/video-url`)
       setUrl(data.downloadUrl)
@@ -437,6 +466,10 @@ function VideoPane({
     return <p className="text-sm text-stone-600">Video is not available yet.</p>
   }
 
+  if (!url && storagePath) {
+    return <p className="text-sm text-stone-500">Loading video…</p>
+  }
+
   return (
     <div className="relative space-y-3">
       {celebrate ? (
@@ -471,7 +504,7 @@ function VideoPane({
         onPause={onPause}
         onError={() => {
           setMsg('Video failed to load. Refreshing link…')
-          void refreshUrl()
+          void refreshUrl({ automatic: true })
         }}
       >
         <track kind="captions" />
@@ -482,7 +515,10 @@ function VideoPane({
           <button
             type="button"
             className="ui-btn-secondary !border-red-200 !px-3 !py-1 !text-xs !text-red-800"
-            onClick={refreshUrl}
+            onClick={() => {
+              refreshAttempts.current = 0
+              void refreshUrl({ automatic: false })
+            }}
           >
             Retry
           </button>
