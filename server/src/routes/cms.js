@@ -711,7 +711,17 @@ cmsRouter.get('/lessons/:lessonId', async (req, res, next) => {
       err.status = 404
       throw err
     }
-    res.json(serializeDoc(doc))
+    const lesson = serializeDoc(doc)
+    // Mint a fresh playback URL for the admin editor preview (stored downloadUrl expires).
+    if (lesson.type === 'video' && lesson.content?.storagePath) {
+      try {
+        const downloadUrl = await getVideoSignedUrl(lesson.content.storagePath)
+        lesson.content = { ...lesson.content, downloadUrl }
+      } catch (signErr) {
+        console.warn('[video] CMS lesson sign failed for', req.params.lessonId, signErr?.message)
+      }
+    }
+    res.json(lesson)
   } catch (e) {
     next(e)
   }
