@@ -1,4 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 
 function progressDocId(traineeId, id) {
   return `${traineeId}_${id}`
@@ -97,11 +98,16 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
   // passed stayed null). Without this, modules sit at N-1 lessons forever.
   await backfillAssessmentLessonProgress(db, traineeId, lessons)
 
-  // Load lesson progress
+  // Load lesson progress (batched — one round trip for the whole module, not one per lesson)
+  const lessonProgressById = await getDocSnapshotsById(
+    db,
+    'lessonProgress',
+    lessons.map((l) => progressDocId(traineeId, l.id)),
+  )
   let completedLessons = 0
   for (const l of lessons) {
-    const pDoc = await db.collection('lessonProgress').doc(progressDocId(traineeId, l.id)).get()
-    if (pDoc.exists && pDoc.data().status === 'completed') completedLessons++
+    const pDoc = lessonProgressById.get(progressDocId(traineeId, l.id))
+    if (pDoc?.exists && pDoc.data().status === 'completed') completedLessons++
   }
 
   const totalLessons = lessons.length
@@ -117,31 +123,34 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
   // with passed=null. Requiring passed===true there would leave the module permanently
   // 'in_progress' even at 100% lessons complete, wrongly locking the next module. Such
   // lessons are already accounted for by allLessonsCompleted, so we don't re-gate them.
-  let examPassed = true
-  const examLessons = lessons.filter((l) => l.type === 'exam')
-  for (const el of examLessons) {
-    const quizId = el.content?.quizId
-    if (!quizId) continue // no linked quiz; rely on lesson completion
-    const quizDoc = await db.collection('quizzes').doc(quizId).get()
-    if (!quizDoc.exists || quizDoc.data().type !== 'exam') continue // not a graded exam
-    const quiz = quizDoc.data()
-    const passMark = Number(quiz.passMark) || 70
-    const attSnap = await db.collection('quizAttempts')
-      .where('quizId', '==', quizId)
-      .where('traineeId', '==', traineeId)
-      .get()
-    const hasPassing = attSnap.docs.some((d) => {
-      const a = d.data()
-      if (a.passed === true) return true
-      // Legacy attempts: score met the bar but passed was left null (missing passMark).
-      if (a.status === 'submitted' || a.status === 'timed_out') {
-        const score = Number(a.score)
-        return Number.isFinite(score) && score >= passMark
-      }
-      return false
-    })
-    if (!hasPassing) examPassed = false
-  }
+  const examLessons = lessons.filter((l) => l.type === 'exam' && l.content?.quizId)
+  const examQuizById = await getDocSnapshotsById(db, 'quizzes', examLessons.map((el) => el.content.quizId))
+  // Each exam lesson's pass check is independent — run them concurrently instead of
+  // one at a time (a course with several graded modules used to pay for this serially).
+  const examResults = await Promise.all(
+    examLessons.map(async (el) => {
+      const quizId = el.content.quizId
+      const quizDoc = examQuizById.get(quizId)
+      if (!quizDoc?.exists || quizDoc.data().type !== 'exam') return true // not a graded exam
+      const quiz = quizDoc.data()
+      const passMark = Number(quiz.passMark) || 70
+      const attSnap = await db.collection('quizAttempts')
+        .where('quizId', '==', quizId)
+        .where('traineeId', '==', traineeId)
+        .get()
+      return attSnap.docs.some((d) => {
+        const a = d.data()
+        if (a.passed === true) return true
+        // Legacy attempts: score met the bar but passed was left null (missing passMark).
+        if (a.status === 'submitted' || a.status === 'timed_out') {
+          const score = Number(a.score)
+          return Number.isFinite(score) && score >= passMark
+        }
+        return false
+      })
+    }),
+  )
+  const examPassed = examResults.every(Boolean)
 
   const completed = allLessonsCompleted && examPassed
 
@@ -192,54 +201,65 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
  * qualifying submitted attempt. Repairs stuck modules (e.g. 44/45 with a passed exam).
  */
 async function backfillAssessmentLessonProgress(db, traineeId, lessons) {
-  for (const l of lessons) {
-    if (l.type !== 'quiz' && l.type !== 'exam') continue
-    const quizId = l.content?.quizId
-    if (!quizId) continue
+  const candidates = lessons.filter(
+    (l) => (l.type === 'quiz' || l.type === 'exam') && l.content?.quizId,
+  )
+  if (candidates.length === 0) return
 
-    const progressRef = db.collection('lessonProgress').doc(progressDocId(traineeId, l.id))
-    const progressDoc = await progressRef.get()
-    if (progressDoc.exists && progressDoc.data().status === 'completed') continue
+  // Batch the two doc-lookups (lessonProgress, quizzes) across all candidate lessons
+  // instead of round-tripping them one lesson at a time.
+  const [progressById, quizById] = await Promise.all([
+    getDocSnapshotsById(db, 'lessonProgress', candidates.map((l) => progressDocId(traineeId, l.id))),
+    getDocSnapshotsById(db, 'quizzes', candidates.map((l) => l.content.quizId)),
+  ])
 
-    const quizDoc = await db.collection('quizzes').doc(quizId).get()
-    if (!quizDoc.exists) continue
-    const quiz = quizDoc.data()
+  await Promise.all(
+    candidates.map(async (l) => {
+      const quizId = l.content.quizId
+      const progressDoc = progressById.get(progressDocId(traineeId, l.id))
+      if (progressDoc?.exists && progressDoc.data().status === 'completed') return
 
-    const attSnap = await db.collection('quizAttempts')
-      .where('quizId', '==', quizId)
-      .where('traineeId', '==', traineeId)
-      .get()
-    if (attSnap.empty) continue
+      const quizDoc = quizById.get(quizId)
+      if (!quizDoc?.exists) return
+      const quiz = quizDoc.data()
 
-    const passMark = quiz.type === 'exam' ? (Number(quiz.passMark) || 70) : null
-    const qualifying = attSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .filter((a) => a.status === 'submitted' || a.status === 'timed_out')
-      .filter((a) => {
-        if (quiz.type === 'quiz') return true // any submitted knowledge-check completes the lesson
-        if (a.passed === true) return true
-        const score = Number(a.score)
-        return Number.isFinite(score) && passMark != null && score >= passMark
-      })
-      .sort((a, b) => (b.attemptNumber || 0) - (a.attemptNumber || 0))
+      const attSnap = await db.collection('quizAttempts')
+        .where('quizId', '==', quizId)
+        .where('traineeId', '==', traineeId)
+        .get()
+      if (attSnap.empty) return
 
-    const best = qualifying[0]
-    if (!best) continue
+      const passMark = quiz.type === 'exam' ? (Number(quiz.passMark) || 70) : null
+      const qualifying = attSnap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((a) => a.status === 'submitted' || a.status === 'timed_out')
+        .filter((a) => {
+          if (quiz.type === 'quiz') return true // any submitted knowledge-check completes the lesson
+          if (a.passed === true) return true
+          const score = Number(a.score)
+          return Number.isFinite(score) && passMark != null && score >= passMark
+        })
+        .sort((a, b) => (b.attemptNumber || 0) - (a.attemptNumber || 0))
 
-    await progressRef.set({
-      lessonId: l.id,
-      moduleId: l.moduleId,
-      courseId: l.courseId,
-      traineeId,
-      status: 'completed',
-      lessonType: quiz.type || l.type,
-      score: best.score ?? null,
-      attemptCount: best.attemptNumber || qualifying.length,
-      completedAt: FieldValue.serverTimestamp(),
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true })
-  }
+      const best = qualifying[0]
+      if (!best) return
+
+      const progressRef = db.collection('lessonProgress').doc(progressDocId(traineeId, l.id))
+      await progressRef.set({
+        lessonId: l.id,
+        moduleId: l.moduleId,
+        courseId: l.courseId,
+        traineeId,
+        status: 'completed',
+        lessonType: quiz.type || l.type,
+        score: best.score ?? null,
+        attemptCount: best.attemptNumber || qualifying.length,
+        completedAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+    }),
+  )
 }
 
 /**
@@ -299,20 +319,27 @@ export async function recalculateCourseProgress(db, traineeId, courseId) {
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((l) => isTraineeAccessible(l.status))
 
+  const [lessonProgressById, moduleProgressById] = await Promise.all([
+    getDocSnapshotsById(db, 'lessonProgress', allLessons.map((l) => progressDocId(traineeId, l.id))),
+    getDocSnapshotsById(db, 'moduleProgress', modules.map((m) => progressDocId(traineeId, m.id))),
+  ])
+
   let completedLessons = 0
   for (const l of allLessons) {
-    const pDoc = await db.collection('lessonProgress').doc(progressDocId(traineeId, l.id)).get()
-    if (pDoc.exists && pDoc.data().status === 'completed') completedLessons++
+    const pDoc = lessonProgressById.get(progressDocId(traineeId, l.id))
+    if (pDoc?.exists && pDoc.data().status === 'completed') completedLessons++
   }
 
   let completedModules = 0
   let currentModuleId = null
   let currentModuleOrder = null
+  // `modules` is already sorted by order, so this stays a plain in-memory loop
+  // (no I/O here) to preserve "first in-progress module wins" semantics.
   for (const mod of modules) {
-    const mpDoc = await db.collection('moduleProgress').doc(progressDocId(traineeId, mod.id)).get()
-    if (mpDoc.exists && mpDoc.data().status === 'completed') {
+    const mpDoc = moduleProgressById.get(progressDocId(traineeId, mod.id))
+    if (mpDoc?.exists && mpDoc.data().status === 'completed') {
       completedModules++
-    } else if (mpDoc.exists && mpDoc.data().status === 'in_progress') {
+    } else if (mpDoc?.exists && mpDoc.data().status === 'in_progress') {
       if (!currentModuleId) {
         currentModuleId = mod.id
         currentModuleOrder = mod.order
@@ -394,11 +421,19 @@ export async function healStuckModules(db, traineeId, courseId, forceModuleIds =
     .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
+  // Batch the "does this module need healing" read across all modules up front —
+  // the actual recalculation (writes + possible cascading unlock) stays sequential
+  // below since it can touch a neighboring module's doc.
+  const moduleProgressById = await getDocSnapshotsById(
+    db,
+    'moduleProgress',
+    modules.map((m) => progressDocId(traineeId, m.id)),
+  )
+
   let healed = false
   for (const mod of modules) {
-    const mpRef = db.collection('moduleProgress').doc(progressDocId(traineeId, mod.id))
-    const mpDoc = await mpRef.get()
-    if (!mpDoc.exists) {
+    const mpDoc = moduleProgressById.get(progressDocId(traineeId, mod.id))
+    if (!mpDoc?.exists) {
       // No cache yet — if live says this module is done, create/update via recalculate.
       if (force.has(mod.id)) {
         const result = await recalculateModuleProgress(db, traineeId, mod.id)

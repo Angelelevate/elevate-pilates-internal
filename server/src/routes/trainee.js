@@ -442,7 +442,7 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
       arr.push(l)
       lessonsByModule.set(l.moduleId, arr)
     }
-    const progressByLessonId = await loadLessonProgressMap(
+    let progressByLessonId = await loadLessonProgressMap(
       db,
       req.user.uid,
       allLessons.map((l) => l.id),
@@ -450,7 +450,17 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
     const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
     try {
       const forceIds = states.filter((s) => s.runtimeCompleted).map((s) => s.module.id)
-      await healStuckModules(db, req.user.uid, courseId, forceIds)
+      const healed = await healStuckModules(db, req.user.uid, courseId, forceIds)
+      // healStuckModules writes lessonProgress/moduleProgress directly to Firestore —
+      // the in-memory map above was loaded before those writes, so it must be re-read
+      // for the recompute below to actually see them (same request, not just next load).
+      if (healed) {
+        progressByLessonId = await loadLessonProgressMap(
+          db,
+          req.user.uid,
+          allLessons.map((l) => l.id),
+        )
+      }
     } catch (healErr) {
       console.warn('[progress] Course heal failed for', courseId, healErr?.message)
     }
@@ -521,26 +531,37 @@ traineeRouter.get(
         arr.push(l)
         lessonsByModule.set(l.moduleId, arr)
       }
-      const progressByLessonId = await loadLessonProgressMap(
+      let progressByLessonId = await loadLessonProgressMap(
         db,
         req.user.uid,
         allLessons.map((l) => l.id),
       )
-      const states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
+      let states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
+
+      // Self-heal stale progression caches (modules stuck at 100% / in_progress from the
+      // historical exam-gate bug) BEFORE the unlock check below — a module that's actually
+      // stuck locked must never 403 here without a chance to heal first, otherwise every
+      // request into it throws before healStuckModules can ever run.
+      try {
+        const forceIds = states.filter((s) => s.runtimeCompleted).map((s) => s.module.id)
+        const healed = await healStuckModules(db, req.user.uid, courseId, forceIds)
+        if (healed) {
+          progressByLessonId = await loadLessonProgressMap(
+            db,
+            req.user.uid,
+            allLessons.map((l) => l.id),
+          )
+          states = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
+        }
+      } catch {
+        // Non-fatal: healing is best-effort and must never block reading the module.
+      }
+
       const state = states.find((s) => s.module.id === moduleId)
       if (!state || !state.unlocked) {
         const err = new Error('Module is locked')
         err.status = 403
         throw err
-      }
-
-      // Self-heal stale progression caches (modules stuck at 100% / in_progress
-      // from the historical exam-gate bug) before returning unlock state.
-      try {
-        const forceIds = states.filter((s) => s.runtimeCompleted).map((s) => s.module.id)
-        await healStuckModules(db, req.user.uid, courseId, forceIds)
-      } catch {
-        // Non-fatal: healing is best-effort and must never block reading the module.
       }
 
       const lessons = (lessonsByModule.get(moduleId) || [])
@@ -560,13 +581,9 @@ traineeRouter.get(
         })
       }
       const firstIncomplete = lessonRows.find((r) => r.status !== 'completed')
-      // Recompute unlock after heal so this response reflects the unlocked next module
-      // if Module N just flipped to completed.
-      const statesAfterHeal = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
-      const stateAfter = statesAfterHeal.find((s) => s.module.id === moduleId) || state
       res.json({
         module: serializeDoc(modDoc),
-        moduleStatus: stateAfter.status,
+        moduleStatus: state.status,
         lessons: lessonRows,
         continueLessonId: firstIncomplete?.id ?? lessonRows[0]?.id ?? null,
       })
