@@ -18,6 +18,12 @@ export function createApp() {
   ]
   const app = express()
 
+  // Render (and most PaaS hosts) put the app behind a reverse proxy. Without this,
+  // req.ip resolves to the proxy's own address for every request, so the rate
+  // limiter below keys on one shared IP for the whole platform instead of per
+  // trainee — a handful of concurrent users can exhaust the limit for everyone.
+  app.set('trust proxy', 1)
+
   app.use(helmet())
   app.use(
     cors({
