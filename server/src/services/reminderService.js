@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '../utils/firestoreDb.js'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { getEnv } from '../config/env.js'
 import { serializeValue } from '../utils/serialize.js'
 
@@ -157,6 +158,11 @@ export async function runReminderScan() {
   let sent = 0
   let skipped = 0
 
+  // Narrow to enrollments actually inside the reminder window before doing any I/O.
+  // These are pure predicates, so applying them first doesn't change which enrollments
+  // ultimately qualify — it just avoids loading a user + progress doc for every
+  // enrollment on the platform on each nightly run.
+  const candidates = []
   for (const d of enSnap.docs) {
     const en = d.data()
     if (en.status !== 'active') continue
@@ -164,21 +170,33 @@ export async function runReminderScan() {
     const dueDate = en.dueDate ? (en.dueDate.toDate ? en.dueDate.toDate() : new Date(en.dueDate)) : null
     if (!dueDate) continue
 
-    // Check if trainee account is disabled
-    const uDoc = await db.collection('users').doc(en.traineeId).get()
-    if (!uDoc.exists) continue
-    const user = uDoc.data()
-    if (user.disabled) continue
-
-    const cpDoc = await db.collection('courseProgress').doc(`${en.traineeId}_${en.courseId}`).get()
-    const cp = cpDoc.exists ? cpDoc.data() : {}
-    if (cp.status === 'completed') continue
-
     const daysUntilDue = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24))
     const isOverdue = daysUntilDue < 0
     const isWarning = daysUntilDue > 0 && daysUntilDue <= settings.warningDaysBefore
-
     if (!isOverdue && !isWarning) continue
+
+    candidates.push({ d, en, dueDate, daysUntilDue, isOverdue, isWarning })
+  }
+
+  if (candidates.length === 0) return { sent: 0, skipped: 0 }
+
+  // Batch-load the docs every surviving candidate needs.
+  const [usersById, courseProgressById, coursesById] = await Promise.all([
+    getDocSnapshotsById(db, 'users', candidates.map((c) => c.en.traineeId)),
+    getDocSnapshotsById(db, 'courseProgress', candidates.map((c) => `${c.en.traineeId}_${c.en.courseId}`)),
+    getDocSnapshotsById(db, 'courses', candidates.map((c) => c.en.courseId)),
+  ])
+
+  for (const { d, en, dueDate, daysUntilDue, isOverdue, isWarning } of candidates) {
+    // Check if trainee account is disabled
+    const uDoc = usersById.get(en.traineeId)
+    if (!uDoc?.exists) continue
+    const user = uDoc.data()
+    if (user.disabled) continue
+
+    const cpDoc = courseProgressById.get(`${en.traineeId}_${en.courseId}`)
+    const cp = cpDoc?.exists ? cpDoc.data() : {}
+    if (cp.status === 'completed') continue
 
     // Check cooldown and max reminders
     const existingSnap = await db.collection('reminderLog')
@@ -208,8 +226,8 @@ export async function runReminderScan() {
       if (hasWarning) { skipped++; continue }
     }
 
-    const courseDoc = await db.collection('courses').doc(en.courseId).get()
-    const course = courseDoc.exists ? courseDoc.data() : { title: 'Course' }
+    const courseDoc = coursesById.get(en.courseId)
+    const course = courseDoc?.exists ? courseDoc.data() : { title: 'Course' }
     const progress = cp.percentComplete || 0
 
     let currentModule = null

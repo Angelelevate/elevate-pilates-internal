@@ -300,11 +300,21 @@ function VideoPane({
   const nearEndSent = useRef(false)
   const wasCompletedRef = useRef(false)
   const refreshAttempts = useRef(0)
+  // Highest position reached this session. Tracked locally so a backward seek can't
+  // regress the saved max — we no longer refetch `progress` on every heartbeat.
+  const sessionMaxRef = useRef(0)
   const [celebrate, setCelebrate] = useState(false)
 
   useEffect(() => {
     wasCompletedRef.current = progress?.status === 'completed'
   }, [progress?.status])
+
+  useEffect(() => {
+    sessionMaxRef.current = Math.max(
+      sessionMaxRef.current,
+      progress?.videoProgress?.maxReached || 0,
+    )
+  }, [progress?.videoProgress?.maxReached])
 
   // Prefer a freshly signed URL from the API. Stored lesson.downloadUrl expires (~7 days).
   useEffect(() => {
@@ -313,6 +323,7 @@ function VideoPane({
     nearEndSent.current = false
     lastSent.current = 0
     refreshAttempts.current = 0
+    sessionMaxRef.current = 0
     setMsg('')
 
     async function loadUrl() {
@@ -394,12 +405,16 @@ function VideoPane({
     let currentTime = el.currentTime
     if (watchedToEnd && denom > 0) currentTime = denom
 
-    const prevMax = progress?.videoProgress?.maxReached || 0
+    const prevMax = Math.max(
+      sessionMaxRef.current,
+      progress?.videoProgress?.maxReached || 0,
+    )
     const maxReached = Math.max(
       currentTime,
       prevMax,
       watchedToEnd && denom > 0 ? denom : 0,
     )
+    sessionMaxRef.current = maxReached
     let percent = 0
     if (denom > 0) {
       percent = Math.min(100, Math.round((maxReached / denom) * 100))
@@ -415,12 +430,17 @@ function VideoPane({
         watchedToEnd,
       })
       const nowCompleted = data.status === 'completed'
+      const completionChanged = nowCompleted !== wasCompletedRef.current
       if (nowCompleted && !wasCompletedRef.current) {
         setCelebrate(true)
         window.setTimeout(() => setCelebrate(false), 3300)
       }
       wasCompletedRef.current = nowCompleted
-      onRefresh()
+      // Only re-fetch the lesson + module when completion actually flipped. This save
+      // runs as a heartbeat every ~12s during playback (plus on pause/seek/end);
+      // refreshing unconditionally meant every heartbeat fired two extra API calls
+      // that changed nothing on screen, tripling request volume per video watched.
+      if (completionChanged) onRefresh()
       return data
     } catch {
       return null

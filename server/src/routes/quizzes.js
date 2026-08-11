@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { FieldValue } from 'firebase-admin/firestore'
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { getDb } from '../utils/firestoreDb.js'
+import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
 import { sanitizeQuestionsForClient } from '../services/quizGrading.js'
 
@@ -163,24 +164,42 @@ async function recalcQuizTotals(db, quizId) {
 async function cascadeDraftFromQuiz(db, quizId) {
   const lessonSnap = await db.collection('lessons').get()
   const affectedCourseIds = new Set()
+  const lessonRefs = []
 
   for (const d of lessonSnap.docs) {
     const lesson = d.data()
     if ((lesson.type === 'quiz' || lesson.type === 'exam') &&
         lesson.content?.quizId === quizId &&
         lesson.status === 'published') {
-      await d.ref.update({ status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+      lessonRefs.push(d.ref)
       if (lesson.courseId) affectedCourseIds.add(lesson.courseId)
     }
   }
+  if (lessonRefs.length === 0) return
 
-  for (const courseId of affectedCourseIds) {
-    const courseRef = db.collection('courses').doc(courseId)
-    const courseDoc = await courseRef.get()
-    if (courseDoc.exists && courseDoc.data().status === 'published') {
-      await courseRef.update({ status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+  // Batch the lesson updates instead of committing one write per lesson.
+  const chunkSize = 400
+  for (let i = 0; i < lessonRefs.length; i += chunkSize) {
+    const batch = db.batch()
+    for (const ref of lessonRefs.slice(i, i + chunkSize)) {
+      batch.update(ref, { status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+    }
+    await batch.commit()
+  }
+
+  // Read the affected courses in one batched call, then commit their updates together.
+  const courseIds = [...affectedCourseIds]
+  const courseDocs = await getDocSnapshotsById(db, 'courses', courseIds)
+  const courseBatch = db.batch()
+  let pendingCourseUpdates = 0
+  for (const courseId of courseIds) {
+    const courseDoc = courseDocs.get(courseId)
+    if (courseDoc?.exists && courseDoc.data().status === 'published') {
+      courseBatch.update(courseDoc.ref, { status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+      pendingCourseUpdates += 1
     }
   }
+  if (pendingCourseUpdates > 0) await courseBatch.commit()
 }
 
 quizzesRouter.post('/:quizId/questions', async (req, res, next) => {

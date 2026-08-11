@@ -3,6 +3,8 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '../components/layout/AppShell.jsx'
 import { ProtectedRoute } from './ProtectedRoute.jsx'
 import { LoadingSpinner } from '../components/LoadingSpinner.jsx'
+// Entry + trainee-facing pages stay eager: these are the first paint for every
+// trainee, so splitting them would only add a round trip before content shows.
 import { HomePage } from '../pages/HomePage.jsx'
 import { LoginPage } from '../pages/LoginPage.jsx'
 import { ForgotPasswordPage } from '../pages/ForgotPasswordPage.jsx'
@@ -11,31 +13,34 @@ import { ForcedPasswordChangePage } from '../pages/ForcedPasswordChangePage.jsx'
 import { TraineeDashboardPage } from '../pages/TraineeDashboardPage.jsx'
 import { TraineeModulePage } from '../pages/TraineeModulePage.jsx'
 import { TraineeLessonPage } from '../pages/TraineeLessonPage.jsx'
-import { CourseListPage } from '../pages/CourseListPage.jsx'
-import { AdminCourseDetailPage } from '../pages/AdminCourseDetailPage.jsx'
-import { AdminModuleDetailPage } from '../pages/AdminModuleDetailPage.jsx'
-import { AdminLessonPreviewPage } from '../pages/AdminLessonPreviewPage.jsx'
-import { UserManagementPage } from '../pages/UserManagementPage.jsx'
 import { ProfilePage } from '../pages/ProfilePage.jsx'
 import { NotFoundPage } from '../pages/NotFoundPage.jsx'
-import { QuizListPage } from '../pages/QuizListPage.jsx'
-import { QuizEditorPage } from '../pages/QuizEditorPage.jsx'
-import { AdminDashboardPage } from '../pages/AdminDashboardPage.jsx'
-import { TraineeListPage } from '../pages/TraineeListPage.jsx'
-import { TraineeDetailPage } from '../pages/TraineeDetailPage.jsx'
-import { OverdueReportPage, AssessmentReportPage, CourseCompletionReportPage } from '../pages/ReportsPage.jsx'
-import { ReminderSettingsPage, ReminderLogPage, PendingRemindersPage } from '../pages/ReminderPages.jsx'
-import { AdminGuidePage } from '../pages/AdminGuidePage.jsx'
 
-// Heavy editor pages — code-split so trainees don't pay for CKEditor 5 (~700KB).
-const LessonEditorPage = lazy(() =>
-  import('../pages/LessonEditorPage.jsx').then((m) => ({ default: m.LessonEditorPage })),
-)
-const AdminGuideCustomizePage = lazy(() =>
-  import('../pages/AdminGuideCustomizePage.jsx').then((m) => ({
-    default: m.AdminGuideCustomizePage,
-  })),
-)
+// Admin-only pages — code-split so trainees (the majority of users, typically on
+// mobile) don't download the entire admin UI they can never reach. Every route
+// below is gated on `roles={['admin']}`.
+const lazyPage = (loader, name) =>
+  lazy(() => loader().then((m) => ({ default: m[name] })))
+
+const LessonEditorPage = lazyPage(() => import('../pages/LessonEditorPage.jsx'), 'LessonEditorPage')
+const AdminGuideCustomizePage = lazyPage(() => import('../pages/AdminGuideCustomizePage.jsx'), 'AdminGuideCustomizePage')
+const CourseListPage = lazyPage(() => import('../pages/CourseListPage.jsx'), 'CourseListPage')
+const AdminCourseDetailPage = lazyPage(() => import('../pages/AdminCourseDetailPage.jsx'), 'AdminCourseDetailPage')
+const AdminModuleDetailPage = lazyPage(() => import('../pages/AdminModuleDetailPage.jsx'), 'AdminModuleDetailPage')
+const AdminLessonPreviewPage = lazyPage(() => import('../pages/AdminLessonPreviewPage.jsx'), 'AdminLessonPreviewPage')
+const UserManagementPage = lazyPage(() => import('../pages/UserManagementPage.jsx'), 'UserManagementPage')
+const QuizListPage = lazyPage(() => import('../pages/QuizListPage.jsx'), 'QuizListPage')
+const QuizEditorPage = lazyPage(() => import('../pages/QuizEditorPage.jsx'), 'QuizEditorPage')
+const AdminDashboardPage = lazyPage(() => import('../pages/AdminDashboardPage.jsx'), 'AdminDashboardPage')
+const TraineeListPage = lazyPage(() => import('../pages/TraineeListPage.jsx'), 'TraineeListPage')
+const TraineeDetailPage = lazyPage(() => import('../pages/TraineeDetailPage.jsx'), 'TraineeDetailPage')
+const AdminGuidePage = lazyPage(() => import('../pages/AdminGuidePage.jsx'), 'AdminGuidePage')
+const OverdueReportPage = lazyPage(() => import('../pages/ReportsPage.jsx'), 'OverdueReportPage')
+const AssessmentReportPage = lazyPage(() => import('../pages/ReportsPage.jsx'), 'AssessmentReportPage')
+const CourseCompletionReportPage = lazyPage(() => import('../pages/ReportsPage.jsx'), 'CourseCompletionReportPage')
+const ReminderSettingsPage = lazyPage(() => import('../pages/ReminderPages.jsx'), 'ReminderSettingsPage')
+const ReminderLogPage = lazyPage(() => import('../pages/ReminderPages.jsx'), 'ReminderLogPage')
+const PendingRemindersPage = lazyPage(() => import('../pages/ReminderPages.jsx'), 'PendingRemindersPage')
 
 function EditorFallback() {
   return (
@@ -47,6 +52,8 @@ function EditorFallback() {
 
 export function AppRoutes() {
   return (
+    // One boundary for every code-split admin page below.
+    <Suspense fallback={<EditorFallback />}>
     <Routes>
       {/* Invite signup runs without the main shell so partial sessions do not expose Profile / Log out. */}
       <Route path="invite/:token" element={<InviteAcceptPage />} />
@@ -269,5 +276,6 @@ export function AppRoutes() {
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
+    </Suspense>
   )
 }

@@ -736,7 +736,14 @@ traineeRouter.post(
     try {
       const db = dbRequired()
       const { lessonId } = req.params
-      const lessonDoc = await db.collection('lessons').doc(lessonId).get()
+      const id = progressDocId(req.user.uid, lessonId)
+      const ref = db.collection('lessonProgress').doc(id)
+      // The existing-progress read doesn't depend on the lesson doc — this runs on
+      // every playback heartbeat, so overlap them rather than paying two round trips.
+      const [lessonDoc, existingSnap] = await Promise.all([
+        db.collection('lessons').doc(lessonId).get(),
+        ref.get(),
+      ])
       if (!lessonDoc.exists) {
         const err = new Error('Lesson not found')
         err.status = 404
@@ -759,9 +766,6 @@ traineeRouter.post(
       const maxReached = Number(req.body?.maxReached) || 0
       const percentWatched = Number(req.body?.percentWatched) || 0
       const watchedToEnd = Boolean(req.body?.watchedToEnd)
-      const id = progressDocId(req.user.uid, lessonId)
-      const ref = db.collection('lessonProgress').doc(id)
-      const existingSnap = await ref.get()
       const createdAt = existingSnap.exists
         ? existingSnap.data().createdAt
         : FieldValue.serverTimestamp()

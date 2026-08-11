@@ -24,10 +24,14 @@ function asDate(value) {
 adminDashboardRouter.get('/summary', async (req, res, next) => {
   try {
     const db = dbRequired()
-    const usersSnap = await db.collection('users').get()
+    // Three independent collection reads — run them concurrently rather than in series.
+    const [usersSnap, enSnap, cpSnap] = await Promise.all([
+      db.collection('users').get(),
+      db.collection('enrollments').get(),
+      db.collection('courseProgress').get(),
+    ])
     const trainees = usersSnap.docs.filter((d) => d.data().role === 'trainee' && !d.data().disabled)
 
-    const enSnap = await db.collection('enrollments').get()
     const enrollments = enSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
     const activeEnrollments = enrollments.filter((e) => e.status === 'active')
     const completedEnrollments = enrollments.filter((e) => e.status === 'completed')
@@ -39,7 +43,6 @@ adminDashboardRouter.get('/summary', async (req, res, next) => {
       return due < now
     })
 
-    const cpSnap = await db.collection('courseProgress').get()
     let progressSum = 0
     let progressCount = 0
     for (const d of cpSnap.docs) {
@@ -333,9 +336,48 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
     )
 
     const now = new Date()
-    const courseDetails = []
+    const uniqueCourseIds = [...new Set(allEnrollments.map((en) => en.courseId).filter(Boolean))]
 
-    for (const enrollment of allEnrollments) {
+    // Fetch modules + lessons once per course, in parallel. Previously this ran one
+    // modules query per enrollment and then, per module, a moduleProgress get and a
+    // lessons query — all sequential (E + E*M*2 round trips for E courses, M modules).
+    const [modulesByCourse, lessonsByCourse] = await Promise.all([
+      Promise.all(
+        uniqueCourseIds.map(async (courseId) => {
+          const snap = await db.collection('modules').where('courseId', '==', courseId).get()
+          return [courseId, snap.docs.map((d) => ({ id: d.id, ...d.data() }))]
+        }),
+      ).then((entries) => new Map(entries)),
+      Promise.all(
+        uniqueCourseIds.map(async (courseId) => {
+          const snap = await db.collection('lessons').where('courseId', '==', courseId).get()
+          return [courseId, snap.docs.map((d) => ({ id: d.id, ...d.data() }))]
+        }),
+      ).then((entries) => new Map(entries)),
+    ])
+
+    // One batched read for every module's progress doc across every enrolled course.
+    const allModuleIds = uniqueCourseIds.flatMap((courseId) =>
+      (modulesByCourse.get(courseId) || []).map((m) => m.id),
+    )
+    const moduleProgressById = await getDocSnapshotsById(
+      db,
+      'moduleProgress',
+      allModuleIds.map((moduleId) => `${traineeId}_${moduleId}`),
+    )
+
+    // Group each course's exam lessons by module so the per-module loop stays in-memory.
+    const examLessonsByModuleId = new Map()
+    for (const courseId of uniqueCourseIds) {
+      for (const l of lessonsByCourse.get(courseId) || []) {
+        if (l.type !== 'exam' || l.status !== 'published') continue
+        const arr = examLessonsByModuleId.get(l.moduleId) || []
+        arr.push(l)
+        examLessonsByModuleId.set(l.moduleId, arr)
+      }
+    }
+
+    const courseDetails = allEnrollments.map((enrollment) => {
       const courseId = enrollment.courseId
       const courseTitle = courseTitleMap.get(courseId) || 'Unknown Course'
       const cpDoc = courseProgressById.get(`${traineeId}_${courseId}`)
@@ -347,26 +389,17 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
       if (isOverdue) effectiveStatus = 'overdue'
       if (cp?.status === 'completed') effectiveStatus = 'completed'
 
-      // Module breakdown for this course
-      const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
-      const modules = modSnap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
+      const modules = (modulesByCourse.get(courseId) || [])
         .filter((m) => m.status === 'published')
         .sort((a, b) => (a.order || 0) - (b.order || 0))
 
-      const moduleDetails = []
-      for (const mod of modules) {
-        const mpDoc = await db.collection('moduleProgress').doc(`${traineeId}_${mod.id}`).get()
-        const mp = mpDoc.exists ? mpDoc.data() : null
-
-        const lessonSnap = await db.collection('lessons').where('moduleId', '==', mod.id).get()
-        const examLessons = lessonSnap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((l) => l.type === 'exam' && l.status === 'published')
+      const moduleDetails = modules.map((mod) => {
+        const mpDoc = moduleProgressById.get(`${traineeId}_${mod.id}`)
+        const mp = mpDoc?.exists ? mpDoc.data() : null
 
         let examScore = null
         let examAttempts = 0
-        for (const el of examLessons) {
+        for (const el of examLessonsByModuleId.get(mod.id) || []) {
           if (el.content?.quizId) {
             const quizAttempts = attemptsByQuizId.get(el.content.quizId) || []
             examAttempts = quizAttempts.length
@@ -375,7 +408,7 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
           }
         }
 
-        moduleDetails.push({
+        return {
           moduleId: mod.id,
           title: mod.title,
           order: mod.order,
@@ -385,21 +418,27 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
           totalLessons: mp?.totalLessons || 0,
           examScore,
           examAttempts,
-        })
-      }
+        }
+      })
 
-      courseDetails.push({
+      return {
         courseId,
         courseTitle,
         enrollment: serializeValue(enrollment),
         courseProgress: cpDoc?.exists ? serializeDoc(cpDoc) : null,
         status: effectiveStatus,
         modules: moduleDetails,
-      })
-    }
+      }
+    })
 
     const quizIds = [...new Set(attempts.map((a) => a.quizId))]
-    const quizDocsById = await getDocSnapshotsById(db, 'quizzes', quizIds)
+    // These three reads are independent of each other — issue them together rather
+    // than paying three sequential round trips.
+    const [quizDocsById, lpSnap, rlSnap] = await Promise.all([
+      getDocSnapshotsById(db, 'quizzes', quizIds),
+      db.collection('lessonProgress').where('traineeId', '==', traineeId).get(),
+      db.collection('reminderLog').where('traineeId', '==', traineeId).get(),
+    ])
     const quizNameMap = new Map(quizIds.map((qid) => {
       const qDoc = quizDocsById.get(qid)
       return [qid, qDoc?.exists ? { title: qDoc.data().title, type: qDoc.data().type } : null]
@@ -411,7 +450,6 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
     }))
 
     // Activity timeline
-    const lpSnap = await db.collection('lessonProgress').where('traineeId', '==', traineeId).get()
     const activity = []
     for (const d of lpSnap.docs) {
       const lp = d.data()
@@ -434,7 +472,6 @@ adminDashboardRouter.get('/trainees/:traineeId/progress', async (req, res, next)
     activity.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
 
     // Reminder history
-    const rlSnap = await db.collection('reminderLog').where('traineeId', '==', traineeId).get()
     const reminders = rlSnap.docs.map((d) => serializeDoc(d))
       .sort((a, b) => String(b.sentAt || '').localeCompare(String(a.sentAt || '')))
 
