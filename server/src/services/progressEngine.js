@@ -16,6 +16,19 @@ function isTraineeAccessible(status) {
 }
 
 /**
+ * Keep only the lessons a trainee can actually reach: archiving a module leaves the
+ * lessons inside it untouched, so filtering on lesson status alone keeps counting
+ * lessons that can never be opened or completed. Left in the denominator they hold a
+ * finished course below 100% permanently.
+ */
+function reachableLessons(lessonDocs, modules) {
+  const visibleModuleIds = new Set(modules.map((m) => m.id))
+  return lessonDocs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((l) => isTraineeAccessible(l.status) && visibleModuleIds.has(l.moduleId))
+}
+
+/**
  * Initialize courseProgress + moduleProgress when a trainee is enrolled.
  */
 export async function initializeProgress(db, traineeId, courseId) {
@@ -26,9 +39,7 @@ export async function initializeProgress(db, traineeId, courseId) {
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
   const lessonSnap = await db.collection('lessons').where('courseId', '==', courseId).get()
-  const lessons = lessonSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => isTraineeAccessible(l.status))
+  const lessons = reachableLessons(lessonSnap.docs, modules)
 
   const totalLessons = lessons.length
   const totalModules = modules.length
@@ -294,9 +305,7 @@ export async function resyncCourseStructure(db, courseId, { traineeIds = null } 
     .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
-  const allLessons = lesSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => isTraineeAccessible(l.status))
+  const allLessons = reachableLessons(lesSnap.docs, modules)
   const lessonsByModule = new Map()
   for (const l of allLessons) {
     const arr = lessonsByModule.get(l.moduleId) || []
@@ -451,11 +460,17 @@ export async function resyncCourseStructure(db, courseId, { traineeIds = null } 
       cpNext.completedAt = FieldValue.serverTimestamp()
     }
 
+    // Compare every field this write would set. Omitting one makes a real change look
+    // like a no-op and silently skips it — leaving totalLessons out is what kept
+    // finished courses pinned at 77% even after the denominator was corrected.
     if (writes.length === 0 && cpDoc.exists) {
       const c = cpDoc.data()
       if (c.status === cpNext.status && Number(c.completedModules) === completedModules
         && Number(c.totalModules) === modules.length
-        && Number(c.completedLessons) === totalCompletedLessons) continue
+        && Number(c.completedLessons) === totalCompletedLessons
+        && Number(c.totalLessons) === cpNext.totalLessons
+        && Number(c.percentComplete) === cpNext.percentComplete
+        && (c.currentModuleId ?? null) === currentModuleId) continue
     }
 
     const chunkSize = 400
@@ -601,9 +616,7 @@ export async function recalculateCourseProgress(db, traineeId, courseId) {
     .sort((a, b) => (a.order || 0) - (b.order || 0))
 
   const lessonSnap = await db.collection('lessons').where('courseId', '==', courseId).get()
-  const allLessons = lessonSnap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => isTraineeAccessible(l.status))
+  const allLessons = reachableLessons(lessonSnap.docs, modules)
 
   const [lessonProgressById, moduleProgressById] = await Promise.all([
     getDocSnapshotsById(db, 'lessonProgress', allLessons.map((l) => progressDocId(traineeId, l.id))),

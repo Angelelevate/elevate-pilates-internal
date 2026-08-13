@@ -46,11 +46,29 @@ function isTraineeAccessible(status) {
   return status !== 'archived'
 }
 
+/**
+ * Lessons an enrolled trainee can actually reach in this course.
+ *
+ * Archiving a *module* does not touch the status of the lessons inside it, so filtering
+ * on the lesson's own status alone leaves those lessons in the course total: unreachable,
+ * impossible to complete, and counted against the trainee forever. That is what pinned
+ * finished courses at "77% complete" while every visible section read 100%.
+ *
+ * The module lookup is deliberately inside this function rather than left to callers —
+ * this rule was already applied inconsistently across five places, and one query is a
+ * cheap price for it being impossible to get wrong at a call site.
+ */
 async function loadAccessibleLessonsForCourse(db, courseId) {
-  const snap = await db.collection('lessons').where('courseId', '==', courseId).get()
-  return snap.docs
+  const [lessonSnap, moduleSnap] = await Promise.all([
+    db.collection('lessons').where('courseId', '==', courseId).get(),
+    db.collection('modules').where('courseId', '==', courseId).get(),
+  ])
+  const visibleModuleIds = new Set(
+    moduleSnap.docs.filter((d) => isTraineeAccessible(d.data().status)).map((d) => d.id),
+  )
+  return lessonSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((l) => isTraineeAccessible(l.status))
+    .filter((l) => isTraineeAccessible(l.status) && visibleModuleIds.has(l.moduleId))
 }
 
 async function loadAccessibleModulesForCourse(db, courseId) {
