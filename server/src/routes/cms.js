@@ -35,7 +35,24 @@ import {
   initializeProgress,
   resyncModuleProgressTotals,
   reevaluateTraineesForModule,
+  resyncCourseStructure,
 } from '../services/progressEngine.js'
+
+/**
+ * Re-derive enrolled trainees' cached progress after a *structural* change to a course:
+ * a module added, archived, reordered, or its completion criteria edited. Module order
+ * defines the unlock chain, so these edits change what "finished" means for people
+ * already part way through — and none of it is recoverable from the existing cache.
+ *
+ * Detached from the response: a course with many enrollees would otherwise make the
+ * admin wait on a full rebuild. Best-effort by design, with the read-path heal as a
+ * backstop; a progress resync must never fail the content change that triggered it.
+ */
+function syncProgressAfterStructureChange(db, courseId) {
+  void resyncCourseStructure(db, courseId).catch((err) => {
+    console.warn('[progress] Course structure resync failed for', courseId, err?.message)
+  })
+}
 
 /**
  * Keep enrolled trainees' cached progress in step with a module whose lesson set just
@@ -463,6 +480,9 @@ cmsRouter.post('/courses/:courseId/modules', async (req, res, next) => {
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     })
+    // A new module counts toward enrolled trainees immediately and shifts the unlock
+    // chain if it was inserted ahead of modules they are already working through.
+    syncProgressAfterStructureChange(db, courseId)
     res.status(201).json(serializeDoc(await ref.get()))
   } catch (e) {
     next(e)
@@ -506,6 +526,9 @@ cmsRouter.patch('/courses/:courseId/modules/reorder', async (req, res, next) => 
       i += 1
     }
     await batch.commit()
+    // Module order *is* the unlock chain — resequencing changes which module gates which
+    // for every enrolled trainee, so their cached lock state has to be re-derived.
+    syncProgressAfterStructureChange(db, courseId)
     const snap = await db.collection('modules').where('courseId', '==', courseId).get()
     const rows = snap.docs.map((d) => serializeDoc(d))
     rows.sort((a, b) => (a.order || 0) - (b.order || 0))
@@ -569,6 +592,11 @@ cmsRouter.patch('/modules/:moduleId', async (req, res, next) => {
       }
     }
     await ref.update(patch)
+    // Order moves the module within the unlock chain; completionCriteria changes what
+    // counts as finishing it. Either redefines completion for trainees mid-course.
+    if (patch.order !== undefined || patch.completionCriteria) {
+      syncProgressAfterStructureChange(db, doc.data().courseId)
+    }
     res.json(serializeDoc(await ref.get()))
   } catch (e) {
     next(e)
@@ -596,6 +624,10 @@ cmsRouter.patch('/modules/:moduleId/status', async (req, res, next) => {
     if (status === 'archived' || status === 'draft') {
       await autoUnpublishCourseIfEmpty(db, doc.data().courseId)
     }
+    // Archiving (or restoring) a module adds/removes a link in the unlock chain.
+    if ((doc.data().status === 'archived') !== (status === 'archived')) {
+      syncProgressAfterStructureChange(db, doc.data().courseId)
+    }
 
     res.json(serializeDoc(await ref.get()))
   } catch (e) {
@@ -615,6 +647,7 @@ cmsRouter.delete('/modules/:moduleId', async (req, res, next) => {
     }
     await ref.update({ status: 'archived', updatedAt: FieldValue.serverTimestamp() })
     await autoUnpublishCourseIfEmpty(db, doc.data().courseId)
+    syncProgressAfterStructureChange(db, doc.data().courseId)
     res.status(204).send()
   } catch (e) {
     next(e)
@@ -1244,6 +1277,18 @@ cmsRouter.patch('/enrollments/:enrollmentId', async (req, res, next) => {
         : null
     }
     await ref.update(patch)
+    // Reactivating a withdrawn enrollment must rebuild the progress documents that
+    // withdrawal left behind (and backfill any modules published in the meantime),
+    // otherwise the trainee returns to a course that tracks nothing.
+    if (patch.status && patch.status !== 'withdrawn' && doc.data().status === 'withdrawn') {
+      const { traineeId, courseId } = doc.data()
+      try {
+        await initializeProgress(db, traineeId, courseId)
+        await resyncCourseStructure(db, courseId, { traineeIds: [traineeId] })
+      } catch (err) {
+        console.warn('[progress] Reactivation resync failed for', traineeId, courseId, err?.message)
+      }
+    }
     res.json(serializeDoc(await ref.get()))
   } catch (e) {
     next(e)

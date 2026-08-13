@@ -267,6 +267,215 @@ async function backfillAssessmentLessonProgress(db, traineeId, lessons) {
 }
 
 /**
+ * Rebuild every enrolled trainee's cached progress for a course from ground truth.
+ *
+ * This is the authoritative repair for any *structural* change: adding or archiving a
+ * module, reordering modules (which redefines the unlock chain), or editing a module's
+ * completion criteria. Those all change what "finished" means for people already part
+ * way through, and none of it is derivable from the existing cache.
+ *
+ * Course content is loaded once and reused across trainees, so the cost is roughly one
+ * pass per enrollee rather than a full recalculation per module per trainee.
+ *
+ * Safety: a module is only ever written back as `locked` when the trainee has no
+ * completed lesson in it. Someone already working inside a module is never locked out
+ * by a structural edit — the worst case is that a module they had finished reverts to
+ * in_progress because genuinely new content landed in it.
+ */
+export async function resyncCourseStructure(db, courseId, { traineeIds = null } = {}) {
+  const [modSnap, lesSnap, enSnap] = await Promise.all([
+    db.collection('modules').where('courseId', '==', courseId).get(),
+    db.collection('lessons').where('courseId', '==', courseId).get(),
+    db.collection('enrollments').where('courseId', '==', courseId).get(),
+  ])
+
+  const modules = modSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((m) => isTraineeAccessible(m.status))
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+
+  const allLessons = lesSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((l) => isTraineeAccessible(l.status))
+  const lessonsByModule = new Map()
+  for (const l of allLessons) {
+    const arr = lessonsByModule.get(l.moduleId) || []
+    arr.push(l)
+    lessonsByModule.set(l.moduleId, arr)
+  }
+
+  const targets = traineeIds ?? [...new Set(
+    enSnap.docs.map((d) => d.data()).filter((e) => e.status !== 'withdrawn').map((e) => e.traineeId),
+  )].filter(Boolean)
+  if (targets.length === 0 || modules.length === 0) return 0
+
+  // Which exam lessons actually gate completion, and every attempt against them.
+  // Loaded once for the whole course instead of per trainee per module.
+  const examLessons = allLessons.filter((l) => l.type === 'exam' && l.content?.quizId)
+  const quizById = await getDocSnapshotsById(db, 'quizzes', examLessons.map((l) => l.content.quizId))
+  const gatingByModule = new Map()
+  for (const l of examLessons) {
+    const q = quizById.get(l.content.quizId)
+    if (!q?.exists || q.data().type !== 'exam') continue // knowledge check: no pass gate
+    const arr = gatingByModule.get(l.moduleId) || []
+    arr.push({ quizId: l.content.quizId, passMark: Number(q.data().passMark) || 70 })
+    gatingByModule.set(l.moduleId, arr)
+  }
+  const gatingQuizIds = [...new Set([...gatingByModule.values()].flat().map((g) => g.quizId))]
+  const attemptsByTraineeQuiz = new Map()
+  await Promise.all(gatingQuizIds.map(async (quizId) => {
+    const snap = await db.collection('quizAttempts').where('quizId', '==', quizId).get()
+    for (const d of snap.docs) {
+      const a = d.data()
+      const key = `${a.traineeId}|${quizId}`
+      const arr = attemptsByTraineeQuiz.get(key) || []
+      arr.push(a)
+      attemptsByTraineeQuiz.set(key, arr)
+    }
+  }))
+
+  let rebuilt = 0
+  for (const traineeId of targets) {
+    const lpById = await getDocSnapshotsById(
+      db, 'lessonProgress', allLessons.map((l) => progressDocId(traineeId, l.id)),
+    )
+    const mpById = await getDocSnapshotsById(
+      db, 'moduleProgress', modules.map((m) => progressDocId(traineeId, m.id)),
+    )
+    const isDone = (lessonId) => {
+      const d = lpById.get(progressDocId(traineeId, lessonId))
+      return Boolean(d?.exists && d.data().status === 'completed')
+    }
+
+    const writes = []
+    let previousCompleted = true // first module is always reachable
+    let completedModules = 0
+    let totalCompletedLessons = 0
+    let currentModuleId = null
+    let currentModuleOrder = null
+
+    for (const mod of modules) {
+      const modLessons = lessonsByModule.get(mod.id) || []
+      const done = modLessons.filter((l) => isDone(l.id)).length
+      totalCompletedLessons += done
+      const total = modLessons.length
+      const allLessonsCompleted = total > 0 && done === total
+
+      // Informational only — surfaced on the summary, but NOT what decides completion.
+      const examPassed = (gatingByModule.get(mod.id) || []).every(({ quizId, passMark }) =>
+        (attemptsByTraineeQuiz.get(`${traineeId}|${quizId}`) || []).some((a) => {
+          if (a.passed === true) return true
+          if (a.status !== 'submitted' && a.status !== 'timed_out') return false
+          const s = Number(a.score)
+          return Number.isFinite(s) && s >= passMark
+        }))
+
+      // Completion must be computed exactly as the live unlock engine computes it
+      // (moduleCompletionState in routes/trainee.js), because that is what actually
+      // grants or refuses access. It honours the module's own completionCriteria and
+      // reads the exam *lesson's* progress rather than re-deriving a pass from
+      // attempts. Gating this cache on attempts instead would recreate the very
+      // cache-vs-live split this function exists to eliminate — a module whose
+      // criteria set examPassed=false would sit at in_progress here while the
+      // trainee is being let straight through it.
+      const needExam = Boolean(mod.completionCriteria?.examPassed)
+      let examOk = true
+      if (needExam) {
+        const examLesson = modLessons.find((l) => l.type === 'exam')
+        if (examLesson) examOk = isDone(examLesson.id)
+      }
+      const completed = allLessonsCompleted && examOk
+      const unlocked = previousCompleted
+      // Mirror the live engine exactly, including when it locks a module the trainee
+      // already has partial progress in. Softening this to keep such a module
+      // 'in_progress' would only make the dashboard advertise a module that the module
+      // route then refuses with 403 — the "it says available, then locks me out"
+      // complaint. The cache's job is to report what access actually is, not to be
+      // kinder than it.
+      const status = completed ? 'completed' : unlocked ? 'in_progress' : 'locked'
+      if (completed) completedModules += 1
+      if (!completed && status !== 'locked' && !currentModuleId) {
+        currentModuleId = mod.id
+        currentModuleOrder = mod.order ?? null
+      }
+
+      const existing = mpById.get(progressDocId(traineeId, mod.id))
+      const next = {
+        percentComplete: total === 0 ? 0 : Math.round((done / total) * 100),
+        completedLessons: done,
+        totalLessons: total,
+        allLessonsCompleted,
+        examPassed,
+        status,
+        updatedAt: FieldValue.serverTimestamp(),
+      }
+      const prev = existing?.exists ? existing.data() : null
+      const unchanged = prev
+        && prev.status === next.status
+        && Number(prev.completedLessons) === next.completedLessons
+        && Number(prev.totalLessons) === next.totalLessons
+        && Boolean(prev.examPassed) === next.examPassed
+      if (!unchanged) {
+        writes.push({
+          ref: db.collection('moduleProgress').doc(progressDocId(traineeId, mod.id)),
+          data: prev
+            ? next
+            : {
+                moduleId: mod.id, courseId, traineeId,
+                unlockedAt: status === 'locked' ? null : FieldValue.serverTimestamp(),
+                completedAt: completed ? FieldValue.serverTimestamp() : null,
+                createdAt: FieldValue.serverTimestamp(), ...next,
+              },
+          isNew: !prev,
+        })
+      }
+      previousCompleted = completed
+    }
+
+    const cpRef = db.collection('courseProgress').doc(progressDocId(traineeId, courseId))
+    const cpDoc = await cpRef.get()
+    const courseCompleted = modules.length > 0 && completedModules === modules.length
+    const cpNext = {
+      status: courseCompleted ? 'completed' : 'in_progress',
+      percentComplete: allLessons.length === 0
+        ? 0 : Math.round((totalCompletedLessons / allLessons.length) * 100),
+      completedModules,
+      totalModules: modules.length,
+      completedLessons: totalCompletedLessons,
+      totalLessons: allLessons.length,
+      currentModuleId,
+      currentModuleOrder,
+      updatedAt: FieldValue.serverTimestamp(),
+    }
+    if (courseCompleted && !(cpDoc.exists && cpDoc.data().status === 'completed')) {
+      cpNext.completedAt = FieldValue.serverTimestamp()
+    }
+
+    if (writes.length === 0 && cpDoc.exists) {
+      const c = cpDoc.data()
+      if (c.status === cpNext.status && Number(c.completedModules) === completedModules
+        && Number(c.totalModules) === modules.length
+        && Number(c.completedLessons) === totalCompletedLessons) continue
+    }
+
+    const chunkSize = 400
+    for (let i = 0; i < writes.length; i += chunkSize) {
+      const batch = db.batch()
+      for (const w of writes.slice(i, i + chunkSize)) {
+        if (w.isNew) batch.set(w.ref, w.data)
+        else batch.update(w.ref, w.data)
+      }
+      await batch.commit()
+    }
+    if (cpDoc.exists) await cpRef.update(cpNext)
+    else await cpRef.set({ courseId, traineeId, startedAt: null, completedAt: null,
+      createdAt: FieldValue.serverTimestamp(), ...cpNext })
+    rebuilt += 1
+  }
+  return rebuilt
+}
+
+/**
  * Resync cached moduleProgress after a module's lesson set changes.
  *
  * Trainee access is decided live from the real lesson list, but the dashboard reads

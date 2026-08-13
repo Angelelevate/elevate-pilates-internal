@@ -49,7 +49,7 @@ export function TraineeDetailPage() {
       a.download = `trainee-${traineeId}-attempts.csv`
       a.click()
       URL.revokeObjectURL(url)
-    } catch (err) {
+    } catch {
       showToast({ variant: 'error', message: 'Export failed.' })
     }
   }

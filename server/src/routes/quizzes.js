@@ -3,6 +3,11 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js'
 import { getDb } from '../utils/firestoreDb.js'
 import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
+import {
+  resyncCourseStructure,
+  resyncModuleProgressTotals,
+  reevaluateTraineesForModule,
+} from '../services/progressEngine.js'
 import { serializeDoc, serializeValue } from '../utils/serialize.js'
 import { sanitizeQuestionsForClient } from '../services/quizGrading.js'
 
@@ -120,6 +125,12 @@ quizzesRouter.patch('/:quizId/status', async (req, res, next) => {
       }
     }
     await ref.update({ status, updatedAt: FieldValue.serverTimestamp() })
+    // Unpublishing strands every lesson pointing here; republishing brings them back.
+    if (doc.data().status === 'published' && status === 'draft') {
+      await cascadeQuizUnavailable(db, req.params.quizId)
+    } else if (status === 'published' && doc.data().status !== 'published') {
+      await restoreLessonsForQuiz(db, req.params.quizId)
+    }
     res.json(serializeDoc(await ref.get()))
   } catch (e) { next(e) }
 })
@@ -131,6 +142,9 @@ quizzesRouter.delete('/:quizId', async (req, res, next) => {
     const doc = await ref.get()
     if (!doc.exists) { const err = new Error('Quiz not found'); err.status = 404; throw err }
     await ref.update({ status: 'archived', updatedAt: FieldValue.serverTimestamp() })
+    // Archiving previously skipped this cascade entirely, silently leaving trainees on
+    // a lesson they could never complete and locking the rest of the course behind it.
+    await cascadeQuizUnavailable(db, req.params.quizId)
     res.status(204).send()
   } catch (e) { next(e) }
 })
@@ -157,32 +171,51 @@ async function recalcQuizTotals(db, quizId) {
   await db.collection('quizzes').doc(quizId).update(update)
 
   if (quizWentDraft) {
-    await cascadeDraftFromQuiz(db, quizId)
+    await cascadeQuizUnavailable(db, quizId)
   }
 }
 
-async function cascadeDraftFromQuiz(db, quizId) {
+/**
+ * A quiz that is not `published` cannot be started by a trainee — the attempt route
+ * rejects it outright. Any lesson still pointing at it therefore becomes impossible to
+ * complete, and because enrolled trainees keep access to non-archived content (drafts
+ * included), that lesson goes on counting toward their module. One unpublished quiz
+ * would strand every trainee on that module forever and lock the rest of the course
+ * behind it.
+ *
+ * Archiving the linked lessons is what actually removes them from progress — `archived`
+ * is the only status both the live unlock engine and the cached summaries agree to
+ * ignore, so reusing it keeps the two in step rather than teaching each a new rule.
+ * The previous status is recorded so restoring the quiz can put the lesson back.
+ */
+async function cascadeQuizUnavailable(db, quizId) {
   const lessonSnap = await db.collection('lessons').get()
   const affectedCourseIds = new Set()
-  const lessonRefs = []
+  const affectedModuleIds = new Set()
+  const targets = []
 
   for (const d of lessonSnap.docs) {
     const lesson = d.data()
     if ((lesson.type === 'quiz' || lesson.type === 'exam') &&
         lesson.content?.quizId === quizId &&
-        lesson.status === 'published') {
-      lessonRefs.push(d.ref)
+        lesson.status !== 'archived') {
+      targets.push({ ref: d.ref, previousStatus: lesson.status })
       if (lesson.courseId) affectedCourseIds.add(lesson.courseId)
+      if (lesson.moduleId) affectedModuleIds.add(lesson.moduleId)
     }
   }
-  if (lessonRefs.length === 0) return
+  if (targets.length === 0) return
 
-  // Batch the lesson updates instead of committing one write per lesson.
   const chunkSize = 400
-  for (let i = 0; i < lessonRefs.length; i += chunkSize) {
+  for (let i = 0; i < targets.length; i += chunkSize) {
     const batch = db.batch()
-    for (const ref of lessonRefs.slice(i, i + chunkSize)) {
-      batch.update(ref, { status: 'draft', updatedAt: FieldValue.serverTimestamp() })
+    for (const t of targets.slice(i, i + chunkSize)) {
+      batch.update(t.ref, {
+        status: 'archived',
+        autoArchivedByQuiz: quizId,
+        statusBeforeQuizArchive: t.previousStatus,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
     }
     await batch.commit()
   }
@@ -200,6 +233,57 @@ async function cascadeDraftFromQuiz(db, quizId) {
     }
   }
   if (pendingCourseUpdates > 0) await courseBatch.commit()
+
+  await syncModules(db, affectedModuleIds)
+}
+
+/**
+ * Put back the lessons that were auto-archived when this quiz became unavailable.
+ * Only touches lessons this mechanism archived, so a lesson an admin archived by hand
+ * stays archived.
+ */
+async function restoreLessonsForQuiz(db, quizId) {
+  const lessonSnap = await db.collection('lessons').get()
+  const affectedModuleIds = new Set()
+  const targets = []
+  for (const d of lessonSnap.docs) {
+    const lesson = d.data()
+    if (lesson.autoArchivedByQuiz !== quizId) continue
+    targets.push({ ref: d.ref, restoreTo: lesson.statusBeforeQuizArchive || 'draft' })
+    if (lesson.moduleId) affectedModuleIds.add(lesson.moduleId)
+  }
+  if (targets.length === 0) return
+
+  const chunkSize = 400
+  for (let i = 0; i < targets.length; i += chunkSize) {
+    const batch = db.batch()
+    for (const t of targets.slice(i, i + chunkSize)) {
+      batch.update(t.ref, {
+        status: t.restoreTo,
+        autoArchivedByQuiz: FieldValue.delete(),
+        statusBeforeQuizArchive: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+    await batch.commit()
+  }
+  await syncModules(db, affectedModuleIds)
+}
+
+/** Best-effort progress resync for a set of modules whose lesson set just changed. */
+async function syncModules(db, moduleIds) {
+  for (const moduleId of moduleIds) {
+    try {
+      const affected = await resyncModuleProgressTotals(db, moduleId)
+      if (affected.length > 0) {
+        void reevaluateTraineesForModule(db, moduleId, affected).catch((err) => {
+          console.warn('[progress] Quiz-cascade re-evaluation failed for', moduleId, err?.message)
+        })
+      }
+    } catch (err) {
+      console.warn('[progress] Quiz-cascade resync failed for module', moduleId, err?.message)
+    }
+  }
 }
 
 quizzesRouter.post('/:quizId/questions', async (req, res, next) => {
@@ -345,6 +429,31 @@ quizzesRouter.post('/:quizId/trainees/:traineeId/reset-attempts', async (req, re
     const batch = db.batch()
     for (const d of snap.docs) batch.delete(d.ref)
     await batch.commit()
+
+    // Deleting the attempts is not enough on its own: the lessonProgress written when
+    // the trainee first submitted still says 'completed', so the module stays complete
+    // and the "reset" changes nothing they can see. Clear the progress for every lesson
+    // pointing at this quiz, then re-derive the affected modules and course.
+    const lessonSnap = await db.collection('lessons').get()
+    const linked = lessonSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((l) => (l.type === 'quiz' || l.type === 'exam') && l.content?.quizId === quizId)
+    if (linked.length > 0) {
+      const clearBatch = db.batch()
+      for (const l of linked) {
+        clearBatch.delete(db.collection('lessonProgress').doc(`${traineeId}_${l.id}`))
+      }
+      await clearBatch.commit()
+
+      const courseIds = [...new Set(linked.map((l) => l.courseId).filter(Boolean))]
+      for (const courseId of courseIds) {
+        try {
+          await resyncCourseStructure(db, courseId, { traineeIds: [traineeId] })
+        } catch (err) {
+          console.warn('[progress] Reset-attempts resync failed for', traineeId, courseId, err?.message)
+        }
+      }
+    }
     res.json({ deleted: snap.size })
   } catch (e) { next(e) }
 })

@@ -34,8 +34,9 @@ export function LoginPage() {
     setBusy(true)
     try {
       await login(email.trim(), password)
-      const { data } = await api.post('/api/auth/verify-token')
-      const r = data.role
+      // Establishes the session's role claim server-side; the destination comes from
+      // homeForRole() once those claims have refreshed.
+      await api.post('/api/auth/verify-token')
       navigate(from && from !== '/login' ? from : homeForRole(), { replace: true })
     } catch (err) {
       const mapped = mapAuthError(err)

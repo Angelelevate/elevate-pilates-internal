@@ -2,7 +2,6 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '../utils/firestoreDb.js'
 import { getDocSnapshotsById } from '../utils/firestoreBatch.js'
 import { getEnv } from '../config/env.js'
-import { serializeValue } from '../utils/serialize.js'
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -62,7 +61,7 @@ function buildReminderEmail(trainee, course, progress, currentModule, dueDate, d
   }
 }
 
-async function sendEmail(to, subject, html) {
+async function sendEmail(to, subject, _html) {
   //TODO: Integrate transactional email (Resend, SendGrid, etc.)
   console.info(`[reminder-email] to=${to} subject="${subject}"`)
   return true

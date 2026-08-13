@@ -1,7 +1,7 @@
 export const MAX_PROFILE_NAME_CHARS = 100
 
 /** Allows digits, spaces, common phone punctuation, optional leading + */
-const PHONE_RE = /^\+?[\d\s().\-]{7,22}$/
+const PHONE_RE = /^\+?[\d\s().-]{7,22}$/
 
 export function normalizePersonName(value, label) {
   const s = String(value ?? '').trim()

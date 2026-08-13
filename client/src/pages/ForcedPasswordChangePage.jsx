@@ -58,7 +58,7 @@ export function ForcedPasswordChangePage() {
       })
       setCurrentPassword('')
       setNewPassword('')
-      const { role: nextRole, profile: nextProfile } = await refreshClaims()
+      const { profile: nextProfile } = await refreshClaims()
       if (nextProfile?.mustChangePassword === true) {
         setError('Password was updated but your session could not refresh. Try signing out and back in.')
         return

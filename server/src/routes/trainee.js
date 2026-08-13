@@ -467,11 +467,6 @@ traineeRouter.get('/courses/:courseId', async (req, res, next) => {
     // Recompute after heal so unlock status reflects any cascading unlocks.
     const statesAfter = computeModuleUnlock(modules, lessonsByModule, progressByLessonId)
     const totalLessons = allLessons.length
-    let completedLessons = 0
-    for (const l of allLessons) {
-      const p = progressByLessonId.get(l.id)
-      if (isLessonCompleted(p)) completedLessons += 1
-    }
     const weightedSum = sumLessonWeights(allLessons, progressByLessonId)
     res.json({
       course: serializeDoc(courseDoc),
