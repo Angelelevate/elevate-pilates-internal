@@ -31,7 +31,30 @@ import {
   assertCourseTextLimits,
   assertCourseTitleLength,
 } from '../utils/cmsLimits.js'
-import { initializeProgress } from '../services/progressEngine.js'
+import {
+  initializeProgress,
+  resyncModuleProgressTotals,
+  reevaluateTraineesForModule,
+} from '../services/progressEngine.js'
+
+/**
+ * Keep enrolled trainees' cached progress in step with a module whose lesson set just
+ * changed. Correcting the totals is awaited (cheap, and it's what stops the dashboard
+ * and the live unlock engine disagreeing); the heavier per-trainee re-evaluation runs
+ * detached so a content edit never blocks on it, with the read-path heal as a backstop.
+ * Always best-effort: a progress resync must never fail the admin's content change.
+ */
+async function syncProgressAfterLessonSetChange(db, moduleId) {
+  try {
+    const affected = await resyncModuleProgressTotals(db, moduleId)
+    if (affected.length === 0) return
+    void reevaluateTraineesForModule(db, moduleId, affected).catch((err) => {
+      console.warn('[progress] Post-edit re-evaluation failed for', moduleId, err?.message)
+    })
+  } catch (err) {
+    console.warn('[progress] Total resync failed for module', moduleId, err?.message)
+  }
+}
 
 export const cmsRouter = Router()
 
@@ -650,6 +673,9 @@ cmsRouter.post('/modules/:moduleId/lessons', async (req, res, next) => {
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     })
+    // A new lesson counts toward enrolled trainees immediately (drafts are accessible),
+    // so their cached module totals have to move with it.
+    await syncProgressAfterLessonSetChange(db, moduleId)
     res.status(201).json(serializeDoc(await ref.get()))
   } catch (e) {
     next(e)
@@ -813,6 +839,10 @@ cmsRouter.patch('/lessons/:lessonId/status', async (req, res, next) => {
       }
     }
     await ref.update({ status, updatedAt: FieldValue.serverTimestamp() })
+    // Archiving (or restoring) a lesson changes what counts toward enrolled trainees.
+    if ((lesson.status === 'archived') !== (status === 'archived')) {
+      await syncProgressAfterLessonSetChange(db, lesson.moduleId)
+    }
     res.json(serializeDoc(await ref.get()))
   } catch (e) {
     next(e)
@@ -830,6 +860,7 @@ cmsRouter.delete('/lessons/:lessonId', async (req, res, next) => {
       throw err
     }
     await ref.update({ status: 'archived', updatedAt: FieldValue.serverTimestamp() })
+    await syncProgressAfterLessonSetChange(db, doc.data().moduleId)
     res.status(204).send()
   } catch (e) {
     next(e)

@@ -267,6 +267,79 @@ async function backfillAssessmentLessonProgress(db, traineeId, lessons) {
 }
 
 /**
+ * Resync cached moduleProgress after a module's lesson set changes.
+ *
+ * Trainee access is decided live from the real lesson list, but the dashboard reads
+ * the cached moduleProgress summary. Adding or archiving a lesson changes the live
+ * count immediately (drafts count too — only `archived` is excluded), so without this
+ * the two disagree: the cache still says 34/34 complete while the live engine counts
+ * 34/35 and refuses to advance. That mismatch is what left trainees seeing a finished
+ * course on the dashboard and "Module is locked" when they clicked into it.
+ *
+ * Call this whenever a lesson is created, archived, or un-archived. Correcting
+ * totalLessons is cheap and is what keeps the two views consistent; the completion and
+ * unlock re-evaluation is best-effort, since the read-path heal is a backstop for it.
+ *
+ * @returns {Promise<string[]>} trainee ids whose cached total was corrected
+ */
+export async function resyncModuleProgressTotals(db, moduleId) {
+  const modDoc = await db.collection('modules').doc(moduleId).get()
+  if (!modDoc.exists) return []
+  const { courseId } = modDoc.data()
+
+  const [lessonSnap, enSnap] = await Promise.all([
+    db.collection('lessons').where('moduleId', '==', moduleId).get(),
+    db.collection('enrollments').where('courseId', '==', courseId).get(),
+  ])
+  const liveTotal = lessonSnap.docs.filter((d) => isTraineeAccessible(d.data().status)).length
+  const traineeIds = [...new Set(
+    enSnap.docs.map((d) => d.data()).filter((e) => e.status !== 'withdrawn').map((e) => e.traineeId),
+  )].filter(Boolean)
+  if (traineeIds.length === 0) return []
+
+  const mpById = await getDocSnapshotsById(
+    db, 'moduleProgress', traineeIds.map((t) => progressDocId(t, moduleId)),
+  )
+  const stale = traineeIds.filter((t) => {
+    const d = mpById.get(progressDocId(t, moduleId))
+    return d?.exists && (Number(d.data().totalLessons) || 0) !== liveTotal
+  })
+  if (stale.length === 0) return []
+
+  const chunkSize = 400
+  for (let i = 0; i < stale.length; i += chunkSize) {
+    const batch = db.batch()
+    for (const t of stale.slice(i, i + chunkSize)) {
+      batch.update(db.collection('moduleProgress').doc(progressDocId(t, moduleId)), {
+        totalLessons: liveTotal,
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+    await batch.commit()
+  }
+  return stale
+}
+
+/**
+ * Re-evaluate completion + unlock for the trainees whose totals just moved. Kept
+ * separate from the write above so callers can correct the counts inline (fast) and
+ * run this without blocking the admin's request.
+ */
+export async function reevaluateTraineesForModule(db, moduleId, traineeIds) {
+  const modDoc = await db.collection('modules').doc(moduleId).get()
+  if (!modDoc.exists) return
+  const { courseId } = modDoc.data()
+  for (const traineeId of traineeIds) {
+    try {
+      await recalculateModuleProgress(db, traineeId, moduleId)
+      await recalculateCourseProgress(db, traineeId, courseId)
+    } catch (err) {
+      console.warn('[progress] Re-evaluation failed for', traineeId, moduleId, err?.message)
+    }
+  }
+}
+
+/**
  * When a module completes, unlock the next sequential module.
  */
 export async function evaluateCascadingUnlock(db, traineeId, courseId, completedModuleOrder) {
