@@ -95,8 +95,9 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
 
   // Backfill lessonProgress for assessment lessons that were passed/submitted but never
   // marked complete (e.g. attempt.lessonId was null, or exam passMark was missing so
-  // passed stayed null). Without this, modules sit at N-1 lessons forever.
-  await backfillAssessmentLessonProgress(db, traineeId, lessons)
+  // passed stayed null, or the lesson was archived and recreated so the attempt points
+  // at the old lesson id). Without this, modules sit at N-1 lessons forever.
+  const backfilled = await backfillAssessmentLessonProgress(db, traineeId, lessons)
 
   // Load lesson progress (batched — one round trip for the whole module, not one per lesson)
   const lessonProgressById = await getDocSnapshotsById(
@@ -159,7 +160,7 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
   const currentStatus = mpDoc.exists ? mpDoc.data().status : 'in_progress'
 
   // Don't update locked modules here (they get unlocked via cascading)
-  if (currentStatus === 'locked') return { completed: false, moduleId }
+  if (currentStatus === 'locked') return { completed: false, moduleId, backfilled }
 
   const newStatus = completed ? 'completed' : 'in_progress'
   const update = {
@@ -193,7 +194,7 @@ export async function recalculateModuleProgress(db, traineeId, moduleId) {
     await evaluateCascadingUnlock(db, traineeId, courseId, mod.order)
   }
 
-  return { completed, moduleId }
+  return { completed, moduleId, backfilled }
 }
 
 /**
@@ -204,7 +205,8 @@ async function backfillAssessmentLessonProgress(db, traineeId, lessons) {
   const candidates = lessons.filter(
     (l) => (l.type === 'quiz' || l.type === 'exam') && l.content?.quizId,
   )
-  if (candidates.length === 0) return
+  if (candidates.length === 0) return 0
+  let written = 0
 
   // Batch the two doc-lookups (lessonProgress, quizzes) across all candidate lessons
   // instead of round-tripping them one lesson at a time.
@@ -258,8 +260,10 @@ async function backfillAssessmentLessonProgress(db, traineeId, lessons) {
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true })
+      written += 1
     }),
   )
+  return written
 }
 
 /**
@@ -415,11 +419,23 @@ export async function recalculateCourseProgress(db, traineeId, courseId) {
  */
 export async function healStuckModules(db, traineeId, courseId, forceModuleIds = []) {
   const force = new Set(forceModuleIds.filter(Boolean))
-  const modSnap = await db.collection('modules').where('courseId', '==', courseId).get()
+  const [modSnap, lessonSnap] = await Promise.all([
+    db.collection('modules').where('courseId', '==', courseId).get(),
+    db.collection('lessons').where('courseId', '==', courseId).get(),
+  ])
   const modules = modSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((m) => isTraineeAccessible(m.status))
     .sort((a, b) => (a.order || 0) - (b.order || 0))
+
+  // Live lesson count per module, used to detect a moduleProgress summary that was
+  // written against a different lesson set than the course currently has.
+  const liveLessonCount = new Map()
+  for (const d of lessonSnap.docs) {
+    const l = d.data()
+    if (!isTraineeAccessible(l.status)) continue
+    liveLessonCount.set(l.moduleId, (liveLessonCount.get(l.moduleId) || 0) + 1)
+  }
 
   // Batch the "does this module need healing" read across all modules up front —
   // the actual recalculation (writes + possible cascading unlock) stays sequential
@@ -431,35 +447,85 @@ export async function healStuckModules(db, traineeId, courseId, forceModuleIds =
   )
 
   let healed = false
+  // Set when the module processed immediately before this one completed during THIS pass.
+  // Its cascading unlock will have flipped this module out of 'locked', so the batched
+  // snapshot above is already out of date and this module must be re-read and
+  // re-evaluated. Without this the heal advances only one module per request, which is
+  // why a trainee who finished several modules had to leave and re-enter repeatedly to
+  // claw back one module at a time.
+  let previousCompleted = false
   for (const mod of modules) {
-    const mpDoc = moduleProgressById.get(progressDocId(traineeId, mod.id))
+    let mpDoc = moduleProgressById.get(progressDocId(traineeId, mod.id))
+    if (previousCompleted) {
+      mpDoc = await db.collection('moduleProgress').doc(progressDocId(traineeId, mod.id)).get()
+    }
     if (!mpDoc?.exists) {
       // No cache yet — if live says this module is done, create/update via recalculate.
-      if (force.has(mod.id)) {
+      if (force.has(mod.id) || previousCompleted) {
         const result = await recalculateModuleProgress(db, traineeId, mod.id)
-        if (result?.completed) healed = true
+        previousCompleted = Boolean(result?.completed)
+        if (result?.completed || result?.backfilled) healed = true
+      } else {
+        previousCompleted = false
       }
       continue
     }
     const mp = mpDoc.data()
-    if (mp.status === 'locked' || mp.status === 'completed') continue
 
     const total = Number(mp.totalLessons) || 0
     const done = Number(mp.completedLessons) || 0
+    const liveTotal = liveLessonCount.get(mod.id) || 0
+
+    // The cached summary was built from a different lesson set than the module has
+    // now — a lesson was added, archived, or moved between modules after this summary
+    // was written. The cached *status* is therefore untrustworthy: a module cached
+    // 'completed' at the old total still reads as incomplete to the live unlock engine
+    // (which counts real lessons), so the next module stays locked while the dashboard
+    // insists everything is done. Re-evaluate these regardless of cached status.
+    //
+    // This also covers a lesson being archived and recreated pointing at the same quiz:
+    // the trainee's attempt is bound to the old lesson id, so the new lesson has no
+    // lessonProgress until the backfill inside recalculate rebuilds it from the attempt.
+    const staleAgainstLiveContent = total !== liveTotal
+
+    if (
+      !staleAgainstLiveContent &&
+      !previousCompleted &&
+      (mp.status === 'locked' || mp.status === 'completed')
+    ) {
+      if (mp.status === 'completed') {
+        // Already-complete modules fire no state transition, so their cascading unlock
+        // never re-runs. If the successor was left locked (an unlock lost to an earlier
+        // failed recalc), nothing else would ever free it — re-assert it here.
+        await evaluateCascadingUnlock(db, traineeId, courseId, mod.order)
+      }
+      previousCompleted = mp.status === 'completed'
+      continue
+    }
+
     // Also re-evaluate "one short" modules — typical stuck exam-lesson case (e.g. 44/45)
     // where a passing attempt exists but lessonProgress was never written.
     const looksComplete =
       force.has(mod.id) ||
+      staleAgainstLiveContent ||
+      previousCompleted ||
       Boolean(mp.allLessonsCompleted) ||
       (total > 0 && done >= total) ||
       (total > 0 && done >= total - 1)
 
     // Only re-evaluate modules that look finished or nearly finished. Don't touch
     // modules still mid-work (examPassed defaults to false at enrollment).
-    if (!looksComplete) continue
+    if (!looksComplete) {
+      previousCompleted = false
+      continue
+    }
 
     const result = await recalculateModuleProgress(db, traineeId, mod.id)
-    if (result?.completed) healed = true
+    previousCompleted = Boolean(result?.completed)
+    // `backfilled` counts lessonProgress docs rebuilt from existing attempts. Those
+    // writes change what the live unlock engine sees, so the caller must re-read even
+    // when the module itself didn't flip to completed.
+    if (result?.completed || result?.backfilled) healed = true
   }
 
   if (healed) await recalculateCourseProgress(db, traineeId, courseId)
